@@ -238,6 +238,7 @@
     <module>scala-api/scala-${scala.binary.version}</module>
     <module>server</module>
     <module>test-lib</module>
+    <module>token-receiver</module>
     <module>integration-test</module>
   </modules>
 

@@ -45,11 +45,84 @@ case class BatchRecoveryMetadata(
 
 object BatchSession extends Logging {
   val RECOVERY_SESSION_TYPE = "batch"
+  private val TOKEN_RECEIVER_LISTENER_CLASS =
+    "org.apache.livy.tokenreceiver.LivyBatchTokenReceiver"
   // batch session child processes number
   private val bscpn = new AtomicInteger
 
   def childProcesses(): AtomicInteger = {
     bscpn
+  }
+
+  /**
+   * When session-level token renewal is enabled, injects the
+   * [[org.apache.livy.tokenreceiver.LivyBatchTokenReceiver]] into the batch driver so
+   * the Livy server can push refreshed delegation tokens to it via RPC. This is done
+   * purely through Spark config (no --principal/--keytab, so the Livy service keytab
+   * is never exposed to the proxy user):
+   *
+   *   spark.jars                            += <livy-token-receiver-jar>
+   *   spark.extraListeners                  += LivyBatchTokenReceiver
+   *   spark.livy.token-receiver.mailbox-dir = <hdfs mailbox parent>
+   *   spark.livy.token-receiver.session-tag = <appTag>
+   *
+   * Works identically in client and cluster deploy modes: the listener runs inside
+   * the driver JVM in both cases, and publishes its (host, port, secret) to an HDFS
+   * mailbox that Livy reads regardless of the driver host.
+   */
+  private[livy] def injectTokenReceiver(
+      conf: Map[String, String],
+      appTag: String,
+      livyConf: LivyConf): Map[String, String] = {
+    if (!livyConf.getBoolean(LivyConf.TOKEN_RENEWAL_ENABLED)) {
+      return conf
+    }
+    val listenerJar = Option(livyConf.get(LivyConf.TOKEN_RENEWAL_BATCH_LISTENER_JAR))
+      .orElse(autoDetectListenerJar())
+    listenerJar match {
+      case None =>
+        warn("Token renewal enabled but the livy-token-receiver JAR could not be " +
+          "located (set livy.server.token-renewal.batch-listener.jar). Batch driver " +
+          "will not receive refreshed tokens.")
+        conf
+      case Some(jar) =>
+        val existingJars = conf.getOrElse("spark.jars", "")
+        val mergedJars = Seq(existingJars, jar).filter(_.nonEmpty).mkString(",")
+        val existingListeners = conf.getOrElse("spark.extraListeners", "")
+        val mergedListeners = Seq(existingListeners, TOKEN_RECEIVER_LISTENER_CLASS)
+          .filter(_.nonEmpty).mkString(",")
+        val mailboxDir = Option(livyConf.get(LivyConf.TOKEN_RENEWAL_MAILBOX_DIR))
+          .getOrElse(defaultMailboxDir(livyConf))
+        val updated = conf ++ Map(
+          "spark.jars" -> mergedJars,
+          "spark.extraListeners" -> mergedListeners,
+          "spark.livy.token-receiver.mailbox-dir" -> mailboxDir,
+          "spark.livy.token-receiver.session-tag" -> appTag)
+        info(s"Delegation token receiver injected for batch appTag=$appTag " +
+          s"(listener JAR=$jar, mailbox=$mailboxDir).")
+        updated
+    }
+  }
+
+  private def autoDetectListenerJar(): Option[String] = {
+    val livyHome = Option(System.getenv("LIVY_HOME")).orElse(sys.props.get("livy.home"))
+    livyHome.flatMap { home =>
+      val jarsDir = new java.io.File(home, "jars")
+      if (!jarsDir.isDirectory) None
+      else Option(jarsDir.listFiles()).flatMap { arr =>
+        arr.find(f => f.getName.startsWith("livy-token-receiver") && f.getName.endsWith(".jar"))
+          .map(_.getAbsolutePath)
+      }
+    }
+  }
+
+  private def defaultMailboxDir(livyConf: LivyConf): String = {
+    Option(livyConf.get(LivyConf.SESSION_STAGING_DIR)) match {
+      case Some(staging) => new org.apache.hadoop.fs.Path(staging, "livy-token-receivers").toString
+      case None =>
+        val home = org.apache.hadoop.fs.FileSystem.get(livyConf.hadoopConf).getHomeDirectory
+        new org.apache.hadoop.fs.Path(home, "livy-token-receivers").toString
+    }
   }
 
   def create(
@@ -66,12 +139,14 @@ object BatchSession extends Logging {
     val impersonatedUser = accessManager.checkImpersonation(proxyUser, owner)
 
     def createSparkApp(s: BatchSession): SparkApp = {
-      val conf = SparkApp.prepareSparkConf(
+      val baseConf = SparkApp.prepareSparkConf(
         appTag,
         livyConf,
         prepareConf(
           request.conf, request.jars, request.files, request.archives, request.pyFiles, livyConf))
       require(request.file != null, "File is required.")
+
+      val conf = injectTokenReceiver(baseConf, appTag, livyConf)
 
       val builder = new SparkProcessBuilder(livyConf)
       builder.conf(conf)
@@ -146,7 +221,7 @@ object BatchSession extends Logging {
 class BatchSession(
     id: Int,
     name: Option[String],
-    appTag: String,
+    val appTag: String,
     initialState: SessionState,
     livyConf: LivyConf,
     owner: String,

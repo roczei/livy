@@ -529,6 +529,28 @@ class InteractiveSession(
 
   override def logLines(): IndexedSeq[String] = app.map(_.log()).getOrElse(sessionLog)
 
+  /**
+   * Push a refreshed Credentials blob (as produced by
+   * {@code Credentials.writeTokenStorageToStream}) into the running RSC driver so it
+   * can update its own UGI and broadcast the tokens to Spark executors. Invoked by
+   * SessionTokenRenewer.
+   */
+  def updateDelegationTokens(credentialsBytes: Array[Byte]): Unit = {
+    client match {
+      case Some(c) =>
+        try {
+          c.updateDelegationTokens(credentialsBytes)
+          info(s"Pushed refreshed delegation tokens to interactive session $id " +
+            s"(${credentialsBytes.length} bytes).")
+        } catch {
+          case e: Exception =>
+            warn(s"Failed to push delegation tokens to interactive session $id", e)
+        }
+      case None =>
+        debug(s"Skipping token push for interactive session $id: no RSC client available.")
+    }
+  }
+
   override def recoveryMetadata: RecoveryMetadata =
     InteractiveRecoveryMetadata(id, name, appId, appTag, kind,
       heartbeatTimeout.toSeconds.toInt, owner, ttl, idleTimeout,

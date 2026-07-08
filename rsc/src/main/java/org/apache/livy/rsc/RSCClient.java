@@ -199,6 +199,16 @@ public class RSCClient implements LivyClient {
     return serverUriPromise;
   }
 
+  /**
+   * Pushes a refreshed Credentials blob (serialized by
+   * {@code Credentials.writeTokenStorageToStream}) to the RSC driver. The driver
+   * installs it on the current UGI and broadcasts it to Spark executors. Used by
+   * the Livy server's SessionTokenRenewer.
+   */
+  public Future<?> updateDelegationTokens(byte[] credentialsBytes) {
+    return protocol.updateDelegationTokens(credentialsBytes);
+  }
+
   @Override
   public <T> JobHandle<T> submit(Job<T> job) {
     return protocol.submit(job);
@@ -395,6 +405,10 @@ public class RSCClient implements LivyClient {
 
     Future<?> endSession() {
       return deferredCall(new EndSession(), Void.class);
+    }
+
+    Future<?> updateDelegationTokens(byte[] credentialsBytes) {
+      return deferredCall(new UpdateDelegationTokens(credentialsBytes), Void.class);
     }
 
     private void handle(ChannelHandlerContext ctx, InitializationError msg) {

@@ -154,8 +154,13 @@ class SparkProcessBuilder(livyConf: LivyConf) extends Logging {
     this
   }
 
-  def start(file: Option[String], args: Traversable[String]): LineBufferedProcess = {
-    var arguments = ArrayBuffer(_executable)
+  /**
+   * Builds the spark-submit command line without launching a process. Exposed for tests.
+   */
+  private[utils] def buildArguments(
+      file: Option[String],
+      args: Traversable[String]): ArrayBuffer[String] = {
+    val arguments = ArrayBuffer(_executable)
 
     def addOpt(option: String, value: Option[String]): Unit = {
       value.foreach { v =>
@@ -194,6 +199,12 @@ class SparkProcessBuilder(livyConf: LivyConf) extends Logging {
 
     arguments += file.getOrElse("spark-internal")
     arguments ++= args
+
+    arguments
+  }
+
+  def start(file: Option[String], args: Traversable[String]): LineBufferedProcess = {
+    val arguments = buildArguments(file, args)
 
     val argsString = arguments
       .map("'" + _.replace("'", "\\'") + "'")

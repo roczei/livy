@@ -123,6 +123,34 @@ object LivyConf {
   val LAUNCH_KERBEROS_REFRESH_INTERVAL = Entry("livy.server.launch.kerberos.refresh-interval", "1h")
   val KINIT_FAIL_THRESHOLD = Entry("livy.server.launch.kerberos.kinit-fail-threshold", 5)
 
+  // ----- Session delegation-token renewal -----
+  // When enabled, Livy periodically obtains fresh HDFS/Hive/HBase delegation tokens on
+  // behalf of each session's proxy user (using its own service keytab, which is never
+  // exposed to the proxy user) and pushes them via RPC into the running Spark driver.
+  // The Spark driver then propagates the tokens to executors through Spark's built-in
+  // UpdateDelegationTokens mechanism.
+  //
+  // Opt-in: the operator must set this to true. Effective only when Hadoop security is
+  // enabled and impersonation is enabled.
+  val TOKEN_RENEWAL_ENABLED = Entry("livy.server.token-renewal.enabled", false)
+  // How often the renewer runs. Default 12h — half of the HDFS default token renew
+  // interval (24h), leaving a 12h safety window before expiry.
+  val TOKEN_RENEWAL_INTERVAL = Entry("livy.server.token-renewal.interval", "12h")
+  // Comma-separated FileSystem URIs to obtain tokens for. Empty = default FileSystem.
+  val TOKEN_RENEWAL_FS_URIS = Entry("livy.server.token-renewal.fs-uris", null)
+  // Full path to the livy-token-receiver JAR shipped with the Livy distribution. When
+  // null, Livy tries to auto-detect it under ${LIVY_HOME}/jars/.
+  val TOKEN_RENEWAL_BATCH_LISTENER_JAR =
+    Entry("livy.server.token-renewal.batch-listener.jar", null)
+  // HDFS directory where batch drivers advertise their RPC endpoint. Files are written
+  // as owner=<livy service user>, mode=0600 so the proxy user cannot read them. Default:
+  // ${livy.session.staging-dir}/livy-token-receivers or /user/<livy>/livy-token-receivers.
+  val TOKEN_RENEWAL_MAILBOX_DIR = Entry("livy.server.token-renewal.mailbox-dir", null)
+  // How long the renewer waits for a batch driver's mailbox file to appear before
+  // giving up on this cycle for that session (it retries on the next cycle).
+  val TOKEN_RENEWAL_MAILBOX_TIMEOUT =
+    Entry("livy.server.token-renewal.mailbox-timeout", "5m")
+
   // Thrift configurations
   val THRIFT_SERVER_ENABLED = Entry("livy.server.thrift.enabled", false)
   val THRIFT_INCR_COLLECT_ENABLED = Entry("livy.server.thrift.incrementalCollect", false)

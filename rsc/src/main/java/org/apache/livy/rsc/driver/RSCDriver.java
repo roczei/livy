@@ -417,6 +417,25 @@ public class RSCDriver extends BaseProtocol {
     }
   }
 
+  /**
+   * Receives a refreshed Credentials blob obtained by the Livy server on behalf of the
+   * session's proxy user, installs it on the current UGI, and forwards it to the Spark
+   * SchedulerBackend so that the executors also pick up the new tokens. Silently no-ops
+   * if the payload is empty or Spark's UpdateDelegationTokens API is unavailable.
+   */
+  public void handle(ChannelHandlerContext ctx, UpdateDelegationTokens msg) {
+    if (msg == null || msg.credentialsBytes == null || msg.credentialsBytes.length == 0) {
+      LOG.warn("Ignoring UpdateDelegationTokens with empty credentials payload.");
+      return;
+    }
+    try {
+      DelegationTokenUpdater.applyCredentials(msg.credentialsBytes);
+      LOG.info("Applied refreshed delegation tokens ({} bytes).", msg.credentialsBytes.length);
+    } catch (Exception e) {
+      LOG.error("Failed to apply refreshed delegation tokens.", e);
+    }
+  }
+
   public void handle(ChannelHandlerContext ctx, JobRequest<?> msg) {
     LOG.info("Received job request {}", msg.id);
     JobWrapper<?> wrapper = new JobWrapper<>(this, msg.id, msg.job);

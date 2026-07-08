@@ -257,4 +257,25 @@ public abstract class BaseProtocol extends RpcDispatcher {
 
   }
 
+  /**
+   * Sent from the Livy server to the RSC driver whenever the server has obtained
+   * a fresh set of Hadoop delegation tokens (via the Livy service keytab, in a
+   * doAs(proxyUser) block). The driver deserializes the credentials, installs them
+   * on the current UGI and forwards them to the Spark SchedulerBackend so that
+   * they propagate to the executors.
+   */
+  public static class UpdateDelegationTokens {
+
+    public final byte[] credentialsBytes;
+
+    public UpdateDelegationTokens(byte[] credentialsBytes) {
+      this.credentialsBytes = credentialsBytes;
+    }
+
+    public UpdateDelegationTokens() {
+      this(null);
+    }
+
+  }
+
 }

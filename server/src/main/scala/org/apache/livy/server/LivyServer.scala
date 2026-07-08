@@ -40,6 +40,7 @@ import org.apache.livy.server.auth.LdapAuthenticationHandlerImpl
 import org.apache.livy.server.batch.BatchSessionServlet
 import org.apache.livy.server.interactive.InteractiveSessionServlet
 import org.apache.livy.server.recovery.{SessionStore, StateStore, ZooKeeperManager}
+import org.apache.livy.server.token.SessionTokenRenewer
 import org.apache.livy.server.ui.UIServlet
 import org.apache.livy.sessions.{BatchSessionManager, InteractiveSessionManager}
 import org.apache.livy.sessions.SessionManager.SESSION_RECOVERY_MODE_OFF
@@ -63,6 +64,8 @@ class LivyServer extends Logging {
   private var zkManager: Option[ZooKeeperManager] = None
 
   private var ugi: UserGroupInformation = _
+
+  private var sessionTokenRenewer: Option[SessionTokenRenewer] = None
 
   def start(): Unit = {
     livyConf = new LivyConf().loadFromFile("livy.conf")
@@ -159,6 +162,18 @@ class LivyServer extends Logging {
     val sessionStore = new SessionStore(livyConf)
     val batchSessionManager = new BatchSessionManager(livyConf, sessionStore)
     val interactiveSessionManager = new InteractiveSessionManager(livyConf, sessionStore)
+
+    // Start the periodic delegation-token renewer. It obtains fresh HDFS/Hive/HBase
+    // tokens for each active session's proxy user, using the Livy service keytab, and
+    // pushes them into the running Spark drivers over RPC (RSC for interactive, TCP
+    // + HMAC to LivyBatchTokenReceiver for batch). Works in both client and cluster
+    // deploy modes because the batch mailbox is on HDFS.
+    if (livyConf.getBoolean(LivyConf.TOKEN_RENEWAL_ENABLED)) {
+      val renewer = new SessionTokenRenewer(livyConf,
+        Seq(batchSessionManager, interactiveSessionManager))
+      renewer.start()
+      sessionTokenRenewer = Some(renewer)
+    }
 
     server = new WebServer(livyConf, host, port)
     server.context.setResourceBase("src/main/org/apache/livy/server")
@@ -410,6 +425,8 @@ class LivyServer extends Logging {
   def join(): Unit = server.join()
 
   def stop(): Unit = {
+    sessionTokenRenewer.foreach(_.stop())
+    sessionTokenRenewer = None
     if (server != null) {
       server.stop()
     }

@@ -232,6 +232,48 @@
 # The below configuration parameter is disabled by default.
 # livy.server.session.allow-custom-classpath = true
 
+#
+# Delegation Token Renewal for Impersonated Sessions
+# ---------------------------------------------------
+# When impersonation is enabled and Kerberos is active, Livy can periodically
+# obtain fresh HDFS/Hive/HBase delegation tokens on behalf of each session's
+# proxy user (using the Livy service keytab, which is NEVER exposed to the
+# proxy user) and push them to the running Spark driver via an authenticated
+# RPC. The Spark driver then propagates the tokens to its executors through
+# Spark's built-in UpdateDelegationTokens mechanism.
+#
+# Works for both batch (spark-submit) and interactive (RSC) sessions, in both
+# client and cluster deploy modes. Requires:
+#   1. livy.server.launch.kerberos.principal / .keytab configured.
+#   2. livy.impersonation.enabled = true.
+#   3. The Livy service principal must be a Hadoop superuser configured in
+#      core-site.xml as hadoop.proxyuser.livy.hosts and hadoop.proxyuser.livy.groups.
+#   4. For batch sessions: the livy-token-receiver JAR must be shipped with the
+#      Livy distribution (auto-detected from ${LIVY_HOME}/jars/), or explicitly
+#      configured with livy.server.token-renewal.batch-listener.jar.
+#
+# Opt-in — disabled by default. Set to true to activate.
+# livy.server.token-renewal.enabled = false
+#
+# How often the renewer runs. Should be well under the HDFS token renew-interval
+# (usually 24h). Default 12h leaves a 12h safety window before expiry.
+# livy.server.token-renewal.interval = 12h
+#
+# Comma-separated FileSystem URIs to obtain tokens for. Empty = default FS only.
+# livy.server.token-renewal.fs-uris =
+#
+# Full path to the livy-token-receiver JAR. When unset, Livy searches
+# ${LIVY_HOME}/jars/livy-token-receiver*.jar.
+# livy.server.token-renewal.batch-listener.jar =
+#
+# HDFS directory where each batch driver publishes its RPC endpoint mailbox
+# (host:port:secret). Default: <session-staging-dir>/livy-token-receivers or
+# <user-home>/livy-token-receivers on the default filesystem.
+# livy.server.token-renewal.mailbox-dir =
+#
+# How long the renewer waits per push attempt (TCP connect + HMAC challenge).
+# livy.server.token-renewal.mailbox-timeout = 5m
+
 # value specifies interval to check safe mode in hdfs filesystem
 # livy.server.hdfs.safe-mode.interval = 5
 # value specifies max attempts to retry when safe mode is ON in hdfs filesystem
