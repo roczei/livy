@@ -93,12 +93,23 @@ object InteractiveSession extends Logging {
       mockClient: Option[RSCClient] = None): InteractiveSession = {
     val appTag = s"livy-session-$id-${Random.alphanumeric.take(8).mkString}".toLowerCase()
     val impersonatedUser = accessManager.checkImpersonation(proxyUser, owner)
+    val preparedConf = prepareConf(
+      request.conf, request.jars, request.files, request.archives, request.pyFiles, livyConf)
+    val sessionFilesystemUris = SessionFilesystemUriCollector.collect(
+      livyConf,
+      preparedConf,
+      jars = request.jars,
+      files = request.files,
+      archives = request.archives,
+      pyFiles = request.pyFiles)
+    val (tokenConf, tokenRenewer) = SessionDelegationTokenRenewer.prepareForLaunch(
+      id, impersonatedUser, livyConf, batchMode = false, preparedConf, sessionFilesystemUris)
 
     val client = mockClient.orElse {
-      val conf = SparkApp.prepareSparkConf(appTag, livyConf, prepareConf(
-        request.conf, request.jars, request.files, request.archives, request.pyFiles, livyConf))
+      val conf = SparkApp.prepareSparkConf(appTag, livyConf, preparedConf)
 
       val builderProperties = prepareBuilderProp(conf, request.kind, livyConf)
+      builderProperties ++= tokenConf
 
       val userOpts: Map[String, Option[String]] = Map(
         "spark.driver.cores" -> request.driverCores.map(_.toString),
@@ -153,7 +164,8 @@ object InteractiveSession extends Logging {
       request.numExecutors,
       request.pyFiles,
       request.queue,
-      mockApp)
+      mockApp,
+      tokenRenewer)
   }
 
   def recover(
@@ -193,7 +205,8 @@ object InteractiveSession extends Logging {
       metadata.numExecutors,
       metadata.pyFiles,
       metadata.queue,
-      mockApp)
+      mockApp,
+      None)
   }
 
   private[interactive] def prepareBuilderProp(
@@ -432,7 +445,8 @@ class InteractiveSession(
     val numExecutors: Option[Int],
     val pyFiles: List[String],
     val queue: Option[String],
-    mockApp: Option[SparkApp]) // For unit test.
+    mockApp: Option[SparkApp],
+    tokenRenewer: Option[SessionDelegationTokenRenewer] = None)
   extends Session(id, name, owner, ttl, idleTimeout, livyConf)
   with SessionHeartbeat
   with SparkAppListener {
@@ -455,7 +469,16 @@ class InteractiveSession(
 
   private var app: Option[SparkApp] = None
 
+  if (tokenRenewer.isDefined) {
+    registerDelegationTokenRenewer(tokenRenewer.get)
+  }
+
   override def start(): Unit = {
+    client.foreach { c =>
+      tokenRenewer.foreach { renewer =>
+        renewer.registerCredentialPusher(bytes => c.updateCredentials(bytes))
+      }
+    }
     sessionStore.save(RECOVERY_SESSION_TYPE, recoveryMetadata)
     heartbeat()
     app = mockApp.orElse {

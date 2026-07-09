@@ -89,6 +89,46 @@ object LivyConf {
   val IMPERSONATION_ENABLED = Entry("livy.impersonation.enabled", false)
   val SUPERUSERS = Entry("livy.superusers", null)
 
+  /** Renew Hadoop delegation tokens server-side for proxy-user sessions. */
+  val DELEGATION_TOKEN_RENEWAL_ENABLED =
+    Entry("livy.impersonation.delegation-token.renewal.enabled", true)
+  /** How often Livy renews delegation tokens and pushes them to running Spark apps. */
+  val DELEGATION_TOKEN_RENEWAL_INTERVAL =
+    Entry("livy.impersonation.delegation-token.renewal.interval", "1h")
+  /**
+   * Principal used as delegation token renewer. Defaults to the Livy launch principal or the
+   * login user short name.
+   */
+  val DELEGATION_TOKEN_RENEWER_PRINCIPAL =
+    Entry("livy.impersonation.delegation-token.renewer.principal", null)
+  /**
+   * Extra Hadoop filesystem URIs (comma-separated) for which to obtain delegation tokens in
+   * addition to fs.defaultFS. Supports HDFS (hdfs://), Ozone (ofs://), and other Hadoop
+   * FileSystem implementations that expose delegation tokens via addDelegationTokens().
+   */
+  val DELEGATION_TOKEN_EXTRA_FILESYSTEMS =
+    Entry("livy.impersonation.delegation-token.extra.filesystems", null)
+  /**
+   * When true, scan session jars/files/archives/conf paths and obtain delegation tokens for
+   * every discovered remote filesystem in addition to fs.defaultFS and extra.filesystems.
+   */
+  val DELEGATION_TOKEN_AUTO_DISCOVER_FILESYSTEMS =
+    Entry("livy.impersonation.delegation-token.auto-discover.filesystems", true)
+  /**
+   * Comma-separated list of services for which to obtain delegation tokens. Supported built-in
+   * values: hdfs, hive, hbase, kafka. Custom provider names may be added via
+   * livy.impersonation.delegation-token.providers.
+   */
+  val DELEGATION_TOKEN_SERVICES =
+    Entry("livy.impersonation.delegation-token.services", "hdfs,hive,hbase,kafka")
+  /**
+   * Optional provider class mappings in the form TYPE=fully.qualified.ClassName. Classes must
+   * implement org.apache.livy.utils.DelegationTokenProvider and have a public no-arg constructor.
+   * Example: mycloud=com.example.livy.cloud.CloudDelegationTokenProvider
+   */
+  val DELEGATION_TOKEN_PROVIDERS =
+    Entry("livy.impersonation.delegation-token.providers", null)
+
   val ACCESS_CONTROL_ENABLED = Entry("livy.server.access-control.enabled", false)
   // Allowed users to access Livy, by default any user is allowed to access Livy. If user want to
   // limit who could access Livy, user should list all the permitted users with comma
@@ -120,6 +160,8 @@ object LivyConf {
 
   val LAUNCH_KERBEROS_PRINCIPAL = Entry("livy.server.launch.kerberos.principal", null)
   val LAUNCH_KERBEROS_KEYTAB = Entry("livy.server.launch.kerberos.keytab", null)
+  val LAUNCH_KERBEROS_KEYTAB_LOGIN_ONLY =
+    Entry("livy.server.launch.kerberos.keytab-login-only", false)
   val LAUNCH_KERBEROS_REFRESH_INTERVAL = Entry("livy.server.launch.kerberos.refresh-interval", "1h")
   val KINIT_FAIL_THRESHOLD = Entry("livy.server.launch.kerberos.kinit-fail-threshold", 5)
 

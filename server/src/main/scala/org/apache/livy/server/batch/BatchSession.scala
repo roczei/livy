@@ -30,7 +30,7 @@ import org.apache.livy.server.AccessManager
 import org.apache.livy.server.recovery.SessionStore
 import org.apache.livy.sessions.{FinishedSessionState, Session, SessionState}
 import org.apache.livy.sessions.Session._
-import org.apache.livy.utils.{AppInfo, SparkApp, SparkAppListener, SparkProcessBuilder}
+import org.apache.livy.utils.{AppInfo, SessionDelegationTokenRenewer, SessionFilesystemUriCollector, SparkApp, SparkAppListener, SparkProcessBuilder}
 
 @JsonIgnoreProperties(ignoreUnknown = true)
 case class BatchRecoveryMetadata(
@@ -64,13 +64,24 @@ object BatchSession extends Logging {
       mockApp: Option[SparkApp] = None): BatchSession = {
     val appTag = s"livy-batch-$id-${Random.alphanumeric.take(8).mkString}".toLowerCase()
     val impersonatedUser = accessManager.checkImpersonation(proxyUser, owner)
+    val preparedConf = prepareConf(
+      request.conf, request.jars, request.files, request.archives, request.pyFiles, livyConf)
+    val sessionFilesystemUris = SessionFilesystemUriCollector.collect(
+      livyConf,
+      preparedConf,
+      jars = request.jars,
+      files = request.files,
+      archives = request.archives,
+      pyFiles = request.pyFiles,
+      mainFile = Option(request.file))
+    val (tokenConf, tokenRenewer) = SessionDelegationTokenRenewer.prepareForLaunch(
+      id, impersonatedUser, livyConf, batchMode = true, preparedConf, sessionFilesystemUris)
 
     def createSparkApp(s: BatchSession): SparkApp = {
       val conf = SparkApp.prepareSparkConf(
         appTag,
         livyConf,
-        prepareConf(
-          request.conf, request.jars, request.files, request.archives, request.pyFiles, livyConf))
+        preparedConf ++ tokenConf)
       require(request.file != null, "File is required.")
 
       val builder = new SparkProcessBuilder(livyConf)
@@ -120,6 +131,7 @@ object BatchSession extends Logging {
       owner,
       impersonatedUser,
       sessionStore,
+      tokenRenewer,
       mockApp.map { m => (_: BatchSession) => m }.getOrElse(createSparkApp))
   }
 
@@ -137,6 +149,7 @@ object BatchSession extends Logging {
       m.owner,
       m.proxyUser,
       sessionStore,
+      None,
       mockApp.map { m => (_: BatchSession) => m }.getOrElse { s =>
         SparkApp.create(m.appTag, m.appId, None, livyConf, Option(s))
       })
@@ -152,9 +165,14 @@ class BatchSession(
     owner: String,
     override val proxyUser: Option[String],
     sessionStore: SessionStore,
+    tokenRenewer: Option[SessionDelegationTokenRenewer] = None,
     sparkApp: BatchSession => SparkApp)
   extends Session(id, name, owner, livyConf) with SparkAppListener {
   import BatchSession._
+
+  if (tokenRenewer.isDefined) {
+    registerDelegationTokenRenewer(tokenRenewer.get)
+  }
 
   protected implicit def executor: ExecutionContextExecutor = ExecutionContext.global
 

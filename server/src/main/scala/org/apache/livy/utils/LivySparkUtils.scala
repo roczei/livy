@@ -100,6 +100,10 @@ object LivySparkUtils extends Logging {
     pb.redirectErrorStream(true)
     pb.redirectInput(ProcessBuilder.Redirect.PIPE)
 
+    // Remove JAVA_TOOL_OPTIONS so that --version does not inherit Kerberos or other JVM flags
+    // that could trigger UGI initialization and slow down or break this lightweight check.
+    pb.environment().remove("JAVA_TOOL_OPTIONS")
+
     if (LivyConf.TEST_MODE) {
       pb.environment().put("LIVY_TEST_CLASSPATH", sys.props("java.class.path"))
     }

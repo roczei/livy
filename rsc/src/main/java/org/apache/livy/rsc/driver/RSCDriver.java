@@ -417,6 +417,11 @@ public class RSCDriver extends BaseProtocol {
     }
   }
 
+  public void handle(ChannelHandlerContext ctx, UpdateCredentialsRequest msg) throws Exception {
+    LOG.info("Received delegation token update from Livy server");
+    DelegationTokenRpcBootstrap.applyCredentials(msg.serializedCredentials);
+  }
+
   public void handle(ChannelHandlerContext ctx, JobRequest<?> msg) {
     LOG.info("Received job request {}", msg.id);
     JobWrapper<?> wrapper = new JobWrapper<>(this, msg.id, msg.job);

@@ -44,3 +44,30 @@ sslCertPath=
 # principal and keytab Path for kerberos authentication
 principal=
 keytabPath=
+
+# Kerberos is enabled by default on the embedded mini cluster (MiniKdc).
+# Set kerberos.enabled=false to run without security.
+kerberos.enabled=true
+livy.test.proxyUser=proxy
+delegation.token.services=hdfs,hive
+
+# Embedded mini cluster services (enabled by default in KerberosMiniCluster).
+hive.enabled=true
+hbase.enabled=true
+kafka.enabled=true
+ozone.enabled=true
+ozone.security.enabled=true
+ozone.test.volume=livy-it
+ozone.test.bucket=bucket1
+
+# Service endpoints (populated automatically when embedded services start)
+hive.metastore.uris=
+hbase.zookeeper.quorum=
+kafka.bootstrap.servers=
+# Kafka broker delegation token settings (short IT defaults: 15s max, 7.5s expiry)
+delegation.token.max.lifetime.ms=15000
+delegation.token.expiry.time.ms=7500
+
+# Populated automatically when MiniOzoneCluster starts (do not set manually for mini IT).
+livy.test.ozone.path=
+ozone.om.service.ids=

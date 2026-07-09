@@ -246,13 +246,22 @@ class LivyThriftSessionManager(val server: LivyThriftServer, val livyConf: LivyC
       new SessionInfo(username, ipAddress, SessionInfo.getForwardedAddresses, protocol))
     val (initStatements, createInteractiveRequest, sessionId) =
       LivyThriftSessionManager.processSessionConf(sessionConf, supportUseDatabase)
+    val (sessionOwner, thriftProxyUser) =
+      if (withImpersonation && livyConf.getBoolean(LivyConf.IMPERSONATION_ENABLED)) {
+        val realUser = Option(org.apache.livy.thriftserver.SessionInfo.getUserName)
+          .filter(_.nonEmpty)
+          .getOrElse(username)
+        if (realUser != username) (realUser, Some(username)) else (username, None)
+      } else {
+        (username, None)
+      }
     val createLivySession = () => {
       createInteractiveRequest.kind = Spark
       val newSession = InteractiveSession.create(
         server.livySessionManager.nextId(),
         createInteractiveRequest.name,
-        username,
-        None,
+        sessionOwner,
+        thriftProxyUser,
         server.livyConf,
         server.accessManager,
         createInteractiveRequest,

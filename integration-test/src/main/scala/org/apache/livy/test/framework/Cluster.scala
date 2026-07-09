@@ -132,9 +132,9 @@ object Cluster extends Logging {
     var _cluster: Cluster = null
     try {
       _cluster = config.get(CLUSTER_TYPE) match {
-        case Some("mini") => new MiniCluster(config)
+        case Some("mini") => createMiniCluster(config)
         case Some("external") => new ExternalCluster(config)
-        case t => new MiniCluster(config)
+        case _ => createMiniCluster(config)
       }
       Runtime.getRuntime.addShutdownHook(new Thread {
         override def run(): Unit = {
@@ -158,5 +158,25 @@ object Cluster extends Logging {
 
   def get(): Cluster = cluster
 
+  def getConfig: Map[String, String] = config
+
   def isRunningOnTravis: Boolean = sys.env.contains("TRAVIS")
+
+  private def createMiniCluster(config: Map[String, String]): Cluster = {
+    val krbEnabled = config.get("kerberos.enabled").forall(_.toBoolean)
+    if (krbEnabled) {
+      try {
+        val clazz = Class.forName("org.apache.livy.test.framework.KerberosMiniCluster")
+        clazz.getConstructor(classOf[Map[_, _]])
+          .newInstance(config)
+          .asInstanceOf[Cluster]
+      } catch {
+        case e: ClassNotFoundException =>
+          warn("KerberosMiniCluster not on classpath, using non-Kerberos MiniCluster", e)
+          new MiniCluster(config)
+      }
+    } else {
+      new MiniCluster(config)
+    }
+  }
 }

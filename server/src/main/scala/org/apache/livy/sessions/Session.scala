@@ -31,7 +31,7 @@ import org.apache.hadoop.fs.permission.FsPermission
 import org.apache.hadoop.security.UserGroupInformation
 
 import org.apache.livy.{LivyConf, Logging, Utils}
-import org.apache.livy.utils.AppInfo
+import org.apache.livy.utils.{AppInfo, SessionDelegationTokenRenewer}
 
 object Session {
   trait RecoveryMetadata { val id: Int }
@@ -210,6 +210,17 @@ abstract class Session(
   // to the session's effective user.
   private var stagingDir: Path = null
 
+  private var delegationTokenRenewer: Option[SessionDelegationTokenRenewer] = None
+
+  protected def registerDelegationTokenRenewer(renewer: SessionDelegationTokenRenewer): Unit = {
+    delegationTokenRenewer = Some(renewer)
+  }
+
+  protected def stopDelegationTokenRenewal(): Unit = {
+    delegationTokenRenewer.foreach(_.stop())
+    delegationTokenRenewer = None
+  }
+
   def appId: Option[String] = _appId
 
   var appInfo: AppInfo = AppInfo()
@@ -237,6 +248,7 @@ abstract class Session(
   def stop(): Future[AnyVal] = Future {
     try {
       info(s"Stopping $this...")
+      stopDelegationTokenRenewal()
       stopSession()
       info(s"Stopped $this.")
     } catch {

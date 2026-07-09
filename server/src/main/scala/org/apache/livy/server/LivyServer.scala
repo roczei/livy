@@ -123,21 +123,21 @@ class LivyServer extends Logging {
         s"Kerberos requires ${LAUNCH_KERBEROS_KEYTAB.key} to be provided.")
       require(launch_principal != null,
         s"Kerberos requires ${LAUNCH_KERBEROS_PRINCIPAL.key} to be provided.")
-      if (!runKinit(launch_keytab, launch_principal)) {
+      val keytabLoginOnly = livyConf.getBoolean(LAUNCH_KERBEROS_KEYTAB_LOGIN_ONLY)
+      if (keytabLoginOnly) {
+        UserGroupInformation.loginUserFromKeytab(launch_principal, launch_keytab)
+      } else if (!runKinit(launch_keytab, launch_principal)) {
         error("Failed to run kinit, stopping the server.")
         sys.exit(1)
+      } else if (livyConf.getBoolean(LivyConf.THRIFT_SERVER_ENABLED)) {
+        // Thrift requires a UGI created from a keytab, not from the kinit ticket cache.
+        UserGroupInformation.loginUserFromKeytab(launch_principal, launch_keytab)
       }
       // This is and should be the only place where a login() on the UGI is performed.
       // If an other login in the codebase is strictly needed, a needLogin check should be added to
       // avoid anyway that 2 logins are performed.
-      // This is needed because the thriftserver requires the UGI to be created from a keytab in
-      // order to work properly and previously Livy was using a UGI generated from the cached TGT
-      // (created by the kinit command).
-      if (livyConf.getBoolean(LivyConf.THRIFT_SERVER_ENABLED)) {
-        UserGroupInformation.loginUserFromKeytab(launch_principal, launch_keytab)
-      }
       ugi = UserGroupInformation.getCurrentUser
-      startKinitThread(launch_keytab, launch_principal)
+      startKinitThread(launch_keytab, launch_principal, keytabLoginOnly)
     }
 
     testRecovery(livyConf)
@@ -362,7 +362,11 @@ class LivyServer extends Logging {
 
   def runKinit(keytab: String, principal: String): Boolean = {
     val commands = Seq("kinit", "-kt", keytab, principal)
-    val proc = new ProcessBuilder(commands: _*).inheritIO().start()
+    val pb = new ProcessBuilder(commands: _*)
+    Option(System.getProperty("java.security.krb5.conf")).foreach { krb5 =>
+      pb.environment().put("KRB5_CONFIG", krb5)
+    }
+    val proc = pb.inheritIO().start()
     proc.waitFor() match {
       case 0 =>
         debug("Ran kinit command successfully.")
@@ -375,13 +379,27 @@ class LivyServer extends Logging {
     }
   }
 
-  def startKinitThread(keytab: String, principal: String): Unit = {
+  def startKinitThread(keytab: String, principal: String, keytabLoginOnly: Boolean): Unit = {
     val refreshInterval = livyConf.getTimeAsMs(LAUNCH_KERBEROS_REFRESH_INTERVAL)
     val kinitFailThreshold = livyConf.getInt(KINIT_FAIL_THRESHOLD)
     executor.schedule(
       new Runnable() {
         override def run(): Unit = {
-          if (runKinit(keytab, principal)) {
+          if (keytabLoginOnly) {
+            try {
+              assert(ugi.equals(UserGroupInformation.getCurrentUser), "Current UGI has changed.")
+              ugi.reloginFromKeytab()
+              executor.schedule(this, refreshInterval, TimeUnit.MILLISECONDS)
+            } catch {
+              case e: Exception =>
+                error("Failed to relogin from keytab.", e)
+                if (server != null && server.server.isStarted()) {
+                  stop()
+                } else {
+                  sys.exit(1)
+                }
+            }
+          } else if (runKinit(keytab, principal)) {
             // The current UGI should never change. If that happens, it is an error condition and
             // relogin the original UGI would not update the current UGI. So the server will fail
             // due to no valid credentials. The assert here allows to fast detect this error

@@ -251,6 +251,18 @@ class ContextLauncher {
   }
 
   /**
+   * Returns true for Spark/YARN Kerberos identity keys (principal and keytab).
+   * These are excluded from spark-defaults.conf when a proxy user is present because
+   * Spark 3.5+ disallows combining --proxy-user with --principal.
+   */
+  private static boolean isKerberosIdentityKey(String key) {
+    return "spark.kerberos.principal".equals(key)
+        || "spark.kerberos.keytab".equals(key)
+        || "spark.yarn.principal".equals(key)
+        || "spark.yarn.keytab".equals(key);
+  }
+
+  /**
    * Write the configuration to a file readable only by the process's owner. Livy properties
    * are written with an added prefix so that they can be loaded using SparkConf on the driver
    * side.
@@ -283,8 +295,17 @@ class ContextLauncher {
                 Files.newInputStream(sparkDefaults.toPath()), UTF_8)) {
             sparkConf.load(r);
         }
+        // When a proxy user is set, do NOT inherit spark.kerberos.principal / keytab
+        // from spark-defaults.conf.  Spark 3.5+ rejects submissions that specify both
+        // --proxy-user and --principal (SparkSubmitArguments.validateSubmitArguments).
+        // The proxy-user session authenticates to YARN via delegation tokens obtained
+        // by Livy on its behalf; the keytab is not needed by the client process.
+        boolean hasProxyUser = conf.get(PROXY_USER) != null;
         for (String key : sparkConf.stringPropertyNames()) {
           if (!confView.containsKey(key)) {
+            if (hasProxyUser && isKerberosIdentityKey(key)) {
+              continue;
+            }
             confView.put(key, sparkConf.getProperty(key));
           }
         }

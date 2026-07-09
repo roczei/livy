@@ -281,6 +281,10 @@ public class RSCClient implements LivyClient {
     return protocol.bypass(serializedJob, jobType, sync);
   }
 
+  public void updateCredentials(byte[] serializedCredentials) {
+    protocol.updateCredentials(serializedCredentials);
+  }
+
   public Future<BypassJobStatus> getBypassJobStatus(String id) {
     return protocol.getBypassJobStatus(id);
   }
@@ -391,6 +395,10 @@ public class RSCClient implements LivyClient {
 
     void cancel(String jobId) {
       deferredCall(new CancelJob(jobId), Void.class);
+    }
+
+    void updateCredentials(byte[] serializedCredentials) {
+      deferredCall(new UpdateCredentialsRequest(serializedCredentials), Void.class);
     }
 
     Future<?> endSession() {

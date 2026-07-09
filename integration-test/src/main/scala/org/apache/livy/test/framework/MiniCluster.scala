@@ -21,13 +21,17 @@ import java.io._
 import java.sql.DriverManager
 import javax.servlet.http.HttpServletResponse
 
+import scala.collection.JavaConverters._
 import scala.concurrent.duration._
 import scala.language.postfixOps
 
 import org.apache.commons.io.FileUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.fs.Path
+import org.apache.hadoop.fs.permission.FsPermission
+import org.apache.hadoop.hdfs.HdfsConfiguration
 import org.apache.hadoop.hdfs.MiniDFSCluster
+import org.apache.hadoop.hdfs.DFSConfigKeys
 import org.apache.hadoop.yarn.conf.YarnConfiguration
 import org.apache.hadoop.yarn.server.MiniYARNCluster
 import org.apache.spark.launcher.SparkLauncher
@@ -80,7 +84,17 @@ sealed abstract class MiniClusterBase extends MiniClusterUtils with Logging {
 object MiniHdfsMain extends MiniClusterBase {
 
   override protected def start(config: MiniClusterConfig, configPath: String): Unit = {
-    val hadoopConf = new Configuration()
+    val hadoopConf = new HdfsConfiguration()
+    hadoopConf.clear()
+    Seq("core-site.xml", "hdfs-site.xml").foreach { name =>
+      val file = new File(configPath, name)
+      if (file.isFile) {
+        hadoopConf.addResource(new Path(file.toURI))
+      }
+    }
+    loginKerberosIfEnabled(
+      configPath,
+      hadoopConf.get(DFSConfigKeys.DFS_NAMENODE_KERBEROS_PRINCIPAL_KEY))
     val hdfsCluster = new MiniDFSCluster.Builder(hadoopConf)
       .numDataNodes(config.dnCount)
       .format(true)
@@ -89,7 +103,38 @@ object MiniHdfsMain extends MiniClusterBase {
 
     hdfsCluster.waitActive()
 
-    saveConfig(hadoopConf, new File(configPath + "/core-site.xml"))
+    val merged = hdfsCluster.getConfiguration(0)
+    // Re-apply original core-site settings that MiniDFSCluster may not propagate to merged config.
+    hadoopConf.iterator().asScala.foreach { entry =>
+      if (merged.get(entry.getKey) == null) {
+        merged.set(entry.getKey, entry.getValue)
+      }
+    }
+    // Always preserve the static group mapping override so HDFS NameNode
+    // doesn't fail resolving virtual Kerberos principals (yarn, hdfs, etc.)
+    // that don't exist as OS users.
+    Option(hadoopConf.get("hadoop.user.group.static.mapping.overrides"))
+      .foreach(merged.set("hadoop.user.group.static.mapping.overrides", _))
+    prepareKerberosHdfsDirs(configPath, hdfsCluster.getFileSystem())
+    saveConfig(merged, new File(configPath + "/core-site.xml"))
+    new File(configPath + "/hdfs.ready").createNewFile()
+  }
+
+  private def prepareKerberosHdfsDirs(configPath: String, fs: org.apache.hadoop.fs.FileSystem): Unit = {
+    val clusterProps = loadProperties(new File(configPath, "cluster.conf"))
+    if (clusterProps.get("kerberos.enabled").forall(_.toBoolean)) {
+      val openPerms = new FsPermission(0x1ff.toShort) // rwxrwxrwx (777)
+      val proxyUser = clusterProps.getOrElse("livy.test.proxyUser", "proxy")
+      // Directories needed by YARN (nodeattributes), spark-submit staging (/user/<name>),
+      // and YARN node labels. All must be writable by virtual KDC service accounts.
+      Seq("/user", "/user/yarn", "/user/livy", s"/user/$proxyUser",
+          "/yarn", "/yarn/nodeattributes", "/yarn/nodelabels",
+          "/tmp").foreach { dir =>
+        val path = new Path(dir)
+        fs.mkdirs(path)
+        fs.setPermission(path, openPerms)
+      }
+    }
   }
 
 }
@@ -98,6 +143,14 @@ object MiniYarnMain extends MiniClusterBase {
 
   override protected def start(config: MiniClusterConfig, configPath: String): Unit = {
     val baseConfig = new YarnConfiguration()
+    baseConfig.clear()
+    Seq("core-site.xml", "yarn-site.xml").foreach { name =>
+      val file = new File(configPath, name)
+      if (file.isFile) {
+        baseConfig.addResource(new Path(file.toURI))
+      }
+    }
+    loginKerberosIfEnabled(configPath, baseConfig.get(YarnConfiguration.RM_PRINCIPAL))
     baseConfig.setFloat(YarnConfiguration.NM_MAX_PER_DISK_UTILIZATION_PERCENTAGE, 100.0f)
     val yarnCluster = new MiniYARNCluster(getClass().getName(), config.nmCount,
       config.localDirCount, config.logDirCount)
@@ -123,6 +176,7 @@ object MiniYarnMain extends MiniClusterBase {
 
     info(s"RM address in configuration is ${yarnConfig.get(YarnConfiguration.RM_ADDRESS)}")
     saveConfig(yarnConfig, new File(configPath + "/yarn-site.xml"))
+    new File(configPath + "/yarn.ready").createNewFile()
   }
 
 }
@@ -147,6 +201,14 @@ object MiniLivyMain extends MiniClusterBase {
 
   def start(config: MiniClusterConfig, configPath: String): Unit = {
     var livyConf = baseLivyConf(configPath)
+    val clusterProps = loadProperties(new File(configPath, "cluster.conf"))
+    if (clusterProps.get("kerberos.enabled").forall(_.toBoolean)) {
+      clusterProps.foreach { case (k, v) =>
+        if (k.startsWith("livy.")) {
+          livyConf += (k -> v)
+        }
+      }
+    }
 
     if (Cluster.isRunningOnTravis) {
       livyConf ++= Map("livy.server.yarn.app-lookup-timeout" -> "2m")
@@ -183,14 +245,14 @@ private case class ProcessInfo(process: Process, logFile: File)
  * Each service will write its client configuration to a temporary directory managed by the
  * framework, so that applications can connect to the services.
  *
- * TODO: add support for MiniKdc.
+ * framework, so that applications can connect to the services.
  */
 class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterUtils with Logging {
   private var _livyEndpoint: String = _
   private var _livyThriftJdbcUrl: Option[String] = None
   private var _hdfsScrathDir: Path = _
 
-  private val _tempDir = new File(s"${sys.props("java.io.tmpdir")}/livy-int-test")
+  protected val tempDir = new File(s"${sys.props("java.io.tmpdir")}/livy-int-test")
   private var _sparkConfigDir: File = _
   private var _configDir: File = _
 
@@ -198,13 +260,16 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
   private var yarn: Option[ProcessInfo] = None
   private var livy: Option[ProcessInfo] = None
 
-  private var _authScheme: String = _
-  private var _user: String = _
+  protected var clusterConfig: Map[String, String] = config
+  protected var extraJvmArgs: Seq[String] = Nil
+
+  protected var _authScheme: String = _
+  protected var _clusterUser: String = "livy"
   private var _password: String = _
   private var _sslCertPath: String = _
 
-  private var _principal: String = _
-  private var _keytabPath: String = _
+  protected var _principal: String = _
+  protected var _keytabPath: String = _
 
   override def configDir(): File = _configDir
 
@@ -214,42 +279,87 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
 
   // Explicitly remove the "test-lib" dependency from the classpath of child processes. We
   // want tests to explicitly upload this jar when necessary, to test those code paths.
-  private val childClasspath = {
-    val cp = sys.props("java.class.path").split(File.pathSeparator)
-    val filtered = cp.filter { path => !new File(path).getName().startsWith("livy-test-lib-") }
-    assert(cp.size != filtered.size, "livy-test-lib jar not found in classpath!")
-    filtered.mkString(File.pathSeparator)
+  protected def extraClasspathJars: Seq[String] = Nil
+
+  private def isEmbeddedServiceJar(fileName: String): Boolean = {
+    val name = fileName.toLowerCase
+    name.startsWith("hive-") ||
+      name.startsWith("hbase-") ||
+      name.startsWith("kafka_") ||
+      name.contains("ozone-") ||
+      name.startsWith("curator-test-")
   }
+
+  private def filterChildClasspath(
+      excludeEmbeddedServiceJars: Boolean): String = {
+    val cp = sys.props("java.class.path").split(File.pathSeparator)
+    val filtered = cp.filter { path =>
+      val name = new File(path).getName()
+      !name.startsWith("livy-test-lib-") &&
+        (!excludeEmbeddedServiceJars || !isEmbeddedServiceJar(name))
+    }
+    assert(cp.size != filtered.size, "livy-test-lib jar not found in classpath!")
+    filtered.distinct.mkString(File.pathSeparator)
+  }
+
+  private def hadoopChildClasspath: String = filterChildClasspath(excludeEmbeddedServiceJars = true)
+
+  private def livyChildClasspath: String = hadoopChildClasspath
 
   private def extraJavaTestArgs: Seq[String] = {
     Option(System.getProperty("extraJavaTestArgs"))
       .map(_.split("\\s+").toSeq).getOrElse(Nil)
   }
 
+  /** Hook for test-scoped Kerberos setup before HDFS/YARN subprocesses start. */
+  protected def configureClusterConfig(
+      configDir: File,
+      initialConfig: Map[String, String]): Map[String, String] = {
+    _authScheme = initialConfig.getOrElse("authScheme", "")
+    _clusterUser = initialConfig.getOrElse("user", "livy")
+    _password = initialConfig.getOrElse("password", "")
+    _sslCertPath = initialConfig.getOrElse("sslCertPath", "")
+    _principal = initialConfig.getOrElse("principal", "")
+    _keytabPath = initialConfig.getOrElse("keytabPath", "")
+    initialConfig
+  }
+
+  protected def afterCleanup(): Unit = {}
+
   override def deploy(): Unit = {
-    if (_tempDir.exists()) {
-      FileUtils.deleteQuietly(_tempDir)
+    if (tempDir.exists()) {
+      FileUtils.deleteQuietly(tempDir)
     }
-    assert(_tempDir.mkdir(), "Cannot create temp test dir.")
+    assert(tempDir.mkdir(), "Cannot create temp test dir.")
     _sparkConfigDir = mkdir("spark-conf")
 
-    val sparkConf = Map(
-      "spark.executor.instances" -> "1",
-      "spark.scheduler.minRegisteredResourcesRatio" -> "0.0",
-      "spark.ui.enabled" -> "false",
-      SparkLauncher.DRIVER_MEMORY -> "512m",
-      SparkLauncher.EXECUTOR_MEMORY -> "512m",
-      SparkLauncher.DRIVER_EXTRA_JAVA_OPTIONS -> "-Dtest.appender=console",
-      SparkLauncher.EXECUTOR_EXTRA_JAVA_OPTIONS -> "-Dtest.appender=console"
-    )
+    val sparkConf = {
+      val base = Map(
+        "spark.executor.instances" -> "1",
+        "spark.scheduler.minRegisteredResourcesRatio" -> "0.0",
+        "spark.ui.enabled" -> "false",
+        SparkLauncher.DRIVER_MEMORY -> "512m",
+        SparkLauncher.EXECUTOR_MEMORY -> "512m",
+        SparkLauncher.DRIVER_EXTRA_JAVA_OPTIONS -> "-Dtest.appender=console",
+        SparkLauncher.EXECUTOR_EXTRA_JAVA_OPTIONS -> "-Dtest.appender=console")
+      val ozoneCp = extraClasspathJars.mkString(File.pathSeparator)
+      if (ozoneCp.nonEmpty) {
+        base ++ Map(
+          "spark.driver.extraClassPath" -> ozoneCp,
+          "spark.executor.extraClassPath" -> ozoneCp)
+      } else {
+        base
+      }
+    }
     saveProperties(sparkConf, new File(_sparkConfigDir, "spark-defaults.conf"))
 
     _configDir = mkdir("hadoop-conf")
-    saveProperties(config, new File(configDir, "cluster.conf"))
-    hdfs = Some(start(MiniHdfsMain.getClass, new File(configDir, "core-site.xml"),
-      extraJavaTestArgs))
-    yarn = Some(start(MiniYarnMain.getClass, new File(configDir, "yarn-site.xml"),
-      extraJavaTestArgs))
+    clusterConfig = configureClusterConfig(_configDir, clusterConfig)
+    saveProperties(clusterConfig, new File(configDir, "cluster.conf"))
+    hdfs = Some(start(MiniHdfsMain.getClass, new File(configDir, "hdfs.ready"),
+      extraJavaTestArgs ++ extraJvmArgs, hadoopChildClasspath))
+    yarn = Some(start(MiniYarnMain.getClass, new File(configDir, "yarn.ready"),
+      extraJavaTestArgs ++ extraJvmArgs, hadoopChildClasspath))
     runLivy()
 
     _hdfsScrathDir = fs.makeQualified(new Path("/"))
@@ -260,6 +370,7 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
     hdfs = None
     yarn = None
     livy = None
+    afterCleanup()
   }
 
   def runLivy(): Unit = {
@@ -269,7 +380,8 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
       .map { args =>
         Seq(args, s"-Djacoco.args=$args")
       }.getOrElse(Nil)
-    val localLivy = start(MiniLivyMain.getClass, confFile, jacocoArgs ++ extraJavaTestArgs)
+    val localLivy = start(MiniLivyMain.getClass, confFile,
+      jacocoArgs ++ extraJavaTestArgs ++ extraJvmArgs, livyChildClasspath)
 
     val props = loadProperties(confFile)
     _livyEndpoint = config.getOrElse("livyEndpoint", props("livy.server.server-url"))
@@ -296,15 +408,15 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
   def livyEndpoint: String = _livyEndpoint
   def jdbcEndpoint: Option[String] = _livyThriftJdbcUrl
 
-  def authScheme: String = _authScheme
-  def user: String = _user
-  def password: String = _password
-  def sslCertPath: String = _sslCertPath
+  override def authScheme: String = _authScheme
+  override def user: String = _clusterUser
+  override def password: String = _password
+  override def sslCertPath: String = _sslCertPath
 
-  def principal: String = _principal
-  def keytabPath: String = _keytabPath
+  override def principal: String = _principal
+  override def keytabPath: String = _keytabPath
 
-  private def mkdir(name: String, parent: File = _tempDir): File = {
+  private def mkdir(name: String, parent: File = tempDir): File = {
     val dir = new File(parent, name)
     if (!dir.exists()) {
       assert(dir.mkdir(), s"Failed to create directory $name.")
@@ -315,7 +427,8 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
   private def start(
       klass: Class[_],
       configFile: File,
-      extraJavaArgs: Seq[String] = Nil): ProcessInfo = {
+      extraJavaArgs: Seq[String] = Nil,
+      classpath: String = livyChildClasspath): ProcessInfo = {
     val simpleName = klass.getSimpleName().stripSuffix("$")
     val procDir = mkdir(simpleName)
     val procTmp = mkdir("tmp", parent = procDir)
@@ -328,7 +441,7 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
         sys.props("java.home") + "/bin/java",
         "-Dtest.appender=console",
         "-Djava.io.tmpdir=" + procTmp.getAbsolutePath(),
-        "-cp", childClasspath + File.pathSeparator + configDir.getAbsolutePath()) ++
+        "-cp", classpath + File.pathSeparator + configDir.getAbsolutePath()) ++
       extraJavaArgs ++
       Seq(
         klass.getName().stripSuffix("$"),
@@ -344,20 +457,49 @@ class MiniCluster(config: Map[String, String]) extends Cluster with MiniClusterU
     pb.environment().put("HADOOP_CONF_DIR", configDir.getAbsolutePath())
     pb.environment().put("SPARK_CONF_DIR", _sparkConfigDir.getAbsolutePath())
     pb.environment().put("SPARK_LOCAL_IP", "127.0.0.1")
+    // kinit (native) reads KRB5_CONFIG.
+    // Java GSSAPI reads java.security.krb5.conf system property.
+    // JAVA_TOOL_OPTIONS propagates JVM options to all child JVMs (spark-submit, etc.).
+    clusterConfig.get("krb5ConfPath").foreach { krb5Conf =>
+      pb.environment().put("KRB5_CONFIG", krb5Conf)
+      val existingJavaOpts = Option(pb.environment().get("JAVA_TOOL_OPTIONS")).getOrElse("")
+      val krb5Opt = s"-Djava.security.krb5.conf=$krb5Conf"
+      if (!existingJavaOpts.contains("krb5.conf")) {
+        pb.environment().put("JAVA_TOOL_OPTIONS",
+          (existingJavaOpts + " " + krb5Opt).trim)
+      }
+    }
 
     val child = pb.start()
 
     // Wait for the config file to show up before returning, so that dependent services
     // can see the configuration. Exit early if process dies.
-    eventually(timeout(30 seconds), interval(100 millis)) {
-      assert(configFile.isFile(), s"$simpleName hasn't started yet.")
+    // Use a longer timeout for services that may require Kerberos initialization.
+    val startupTimeout = if (simpleName == "MiniLivyMain") 90.seconds else 30.seconds
+    try {
+      eventually(timeout(startupTimeout), interval(100 millis)) {
+        assert(configFile.isFile(), s"$simpleName hasn't started yet.")
 
-      try {
-        val exitCode = child.exitValue()
-        throw new IOException(s"Child process exited unexpectedly (exit code $exitCode)")
-      } catch {
-        case _: IllegalThreadStateException => // Try again.
+        try {
+          val exitCode = child.exitValue()
+          throw new IOException(s"Child process exited unexpectedly (exit code $exitCode)")
+        } catch {
+          case _: IllegalThreadStateException => // Try again.
+        }
       }
+    } catch {
+      case t: Throwable =>
+        val logContent = if (logFile.isFile) {
+          try {
+            val src = scala.io.Source.fromFile(logFile)
+            try src.mkString finally src.close()
+          } catch { case _: Exception => "<unreadable>" }
+        } else {
+          "<not created>"
+        }
+        error(s"$simpleName failed to start. Process log (${logFile.getAbsolutePath}):\n$logContent")
+        child.destroy()
+        throw t
     }
 
     ProcessInfo(child, logFile)

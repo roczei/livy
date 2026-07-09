@@ -257,4 +257,18 @@ public abstract class BaseProtocol extends RpcDispatcher {
 
   }
 
+  public static class UpdateCredentialsRequest {
+
+    public final byte[] serializedCredentials;
+
+    public UpdateCredentialsRequest(byte[] serializedCredentials) {
+      this.serializedCredentials = serializedCredentials;
+    }
+
+    public UpdateCredentialsRequest() {
+      this(null);
+    }
+
+  }
+
 }

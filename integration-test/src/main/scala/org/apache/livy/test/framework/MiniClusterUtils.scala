@@ -24,6 +24,9 @@ import java.util.Properties
 import scala.collection.JavaConverters._
 
 import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.CommonConfigurationKeysPublic
+import org.apache.hadoop.security.SecurityUtil
+import org.apache.hadoop.security.UserGroupInformation
 
 trait MiniClusterUtils {
 
@@ -63,6 +66,23 @@ trait MiniClusterUtils {
       redacted.writeXml(out)
     } finally {
       out.close()
+    }
+  }
+
+  protected def loginKerberosIfEnabled(configPath: String, principal: String): Unit = {
+    val clusterProps = loadProperties(new File(configPath, "cluster.conf"))
+    if (clusterProps.get("kerberos.enabled").forall(_.toBoolean)) {
+      clusterProps.get("krb5ConfPath").foreach { krb5 =>
+        System.setProperty("java.security.krb5.conf", krb5)
+      }
+      val keytab = clusterProps.getOrElse("keytabPath",
+        throw new IllegalStateException("keytabPath missing from cluster.conf"))
+      val conf = new Configuration(false)
+      conf.set(CommonConfigurationKeysPublic.HADOOP_SECURITY_AUTHENTICATION, "kerberos")
+      SecurityUtil.setAuthenticationMethod(
+        UserGroupInformation.AuthenticationMethod.KERBEROS, conf)
+      UserGroupInformation.setConfiguration(conf)
+      UserGroupInformation.loginUserFromKeytab(principal, keytab)
     }
   }
 }
