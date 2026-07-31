@@ -22,12 +22,13 @@ import java.util.concurrent.{CountDownLatch, TimeUnit}
 import scala.collection.mutable.ArrayBuffer
 import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
+import scala.language.postfixOps
 
-import org.scalatest.FunSuite
+import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.livy.LivyBaseUnitTestSuite
 
-object ScalaClientTestUtils extends FunSuite with LivyBaseUnitTestSuite {
+object ScalaClientTestUtils extends AnyFunSuite with LivyBaseUnitTestSuite {
 
   val Timeout = 40
 
@@ -43,7 +44,7 @@ object ScalaClientTestUtils extends FunSuite with LivyBaseUnitTestSuite {
     for (a <- 1 to count) {
       buffer += r.nextInt()
     }
-    context.sc.parallelize(buffer, partitions).count()
+    context.sc.parallelize(buffer.toSeq, partitions).count()
   }
 
   def assertAwait(lock: CountDownLatch): Unit = {

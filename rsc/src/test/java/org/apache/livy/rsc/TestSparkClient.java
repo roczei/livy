@@ -80,6 +80,10 @@ public class TestSparkClient {
     conf.put("spark.repl.enableHiveContext", hiveSupport);
     conf.put("spark.sql.catalogImplementation", hiveSupport ? "hive" : "in-memory");
     conf.put(RETAINED_SHARE_VARIABLES.key(), "2");
+    // Bind the RPC server to loopback so these tests work on hosts (macOS,
+    // laptops on flaky networks, CI runners without a routable interface)
+    // where the primary hostname resolves to a loopback-only address.
+    conf.put(RPC_SERVER_ADDRESS.key(), "127.0.0.1");
     return conf;
   }
 

@@ -30,7 +30,8 @@ import scala.concurrent.{ExecutionContext, Future}
 import org.mockito.ArgumentCaptor
 import org.mockito.Matchers.{eq => meq, _}
 import org.mockito.Mockito._
-import org.scalatest.{BeforeAndAfterAll, FunSpecLike}
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.funspec.AnyFunSpecLike
 import org.scalatra.LifeCycle
 import org.scalatra.servlet.ScalatraListener
 
@@ -49,7 +50,7 @@ import org.apache.livy.utils.AppInfo
  * module, which implements the client session backend. The client servlet has some functionality
  * overridden to avoid creating sub-processes for each seession.
  */
-class HttpClientSpec extends FunSpecLike with BeforeAndAfterAll with LivyBaseUnitTestSuite {
+class HttpClientSpec extends AnyFunSpecLike with BeforeAndAfterAll with LivyBaseUnitTestSuite {
 
   import HttpClientSpec._
 
@@ -62,7 +63,9 @@ class HttpClientSpec extends FunSpecLike with BeforeAndAfterAll with LivyBaseUni
 
   override def beforeAll(): Unit = {
     super.beforeAll()
-    server = new WebServer(new LivyConf(), "0.0.0.0", 0)
+    // Bind to loopback so the tests work on hosts (macOS, laptops) whose
+    // canonical hostname resolves to an unreachable local IP.
+    server = new WebServer(new LivyConf(), "127.0.0.1", 0)
 
     server.context.setResourceBase("src/main/org/apache/livy/server")
     server.context.setInitParameter(ScalatraListener.LifeCycleKey,
@@ -88,9 +91,12 @@ class HttpClientSpec extends FunSpecLike with BeforeAndAfterAll with LivyBaseUni
   describe("HTTP client library") {
 
     it("should create clients") {
-      // WebServer does this internally instead of respecting "0.0.0.0", so try to use the same
-      // address.
-      val uri = s"http://${InetAddress.getLocalHost.getHostAddress}:${server.port}/"
+      // Use `server.host` rather than resolving the local host here: the test
+      // binds WebServer to 127.0.0.1 (see beforeAll) so the same loopback
+      // address must be used by the client, otherwise on hosts whose
+      // canonical hostname resolves to a routable-but-unreachable local IP
+      // the connect times out.
+      val uri = s"http://${server.host}:${server.port}/"
       client = new LivyClientBuilder(false).setURI(new URI(uri)).build()
     }
 
@@ -183,7 +189,8 @@ class HttpClientSpec extends FunSpecLike with BeforeAndAfterAll with LivyBaseUni
 
     withClient("should connect to existing sessions") {
       var sid = client.asInstanceOf[HttpClient].getSessionId()
-      val uri = s"http://${InetAddress.getLocalHost.getHostAddress}:${server.port}" +
+      // Match the loopback address the WebServer bound to (see beforeAll).
+      val uri = s"http://${server.host}:${server.port}" +
         s"${LivyConnection.SESSIONS_URI}/$sid"
       val newClient = new LivyClientBuilder(false).setURI(new URI(uri)).build()
       newClient.stop(false)

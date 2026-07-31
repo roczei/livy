@@ -65,6 +65,10 @@ abstract class BaseInteractiveServletSpec
     request.conf = extraConf ++ Map(
       RSCConf.Entry.LIVY_JARS.key() -> "",
       RSCConf.Entry.CLIENT_IN_PROCESS.key() -> inProcess.toString,
+      // Bind RPC to loopback so the child driver JVM can reach the server
+      // on hosts (macOS, laptops) whose primary hostname resolves to a
+      // loopback-only address; without this the driver times out and exits.
+      RSCConf.Entry.RPC_SERVER_ADDRESS.key() -> "127.0.0.1",
       SparkLauncher.SPARK_MASTER -> "local",
       SparkLauncher.DRIVER_EXTRA_CLASSPATH -> classpath,
       SparkLauncher.EXECUTOR_EXTRA_CLASSPATH -> classpath

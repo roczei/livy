@@ -33,13 +33,14 @@ import scala.util.{Failure, Success}
 
 import org.apache.spark.SparkFiles
 import org.apache.spark.launcher.SparkLauncher
-import org.scalatest.{BeforeAndAfter, FunSuite}
+import org.scalatest.BeforeAndAfter
 import org.scalatest.concurrent.ScalaFutures
+import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.livy.LivyBaseUnitTestSuite
 import org.apache.livy.rsc.RSCConf.Entry._
 
-class ScalaClientTest extends FunSuite
+class ScalaClientTest extends AnyFunSuite
   with ScalaFutures
   with BeforeAndAfter
   with LivyBaseUnitTestSuite {
@@ -188,6 +189,10 @@ object ScalaClientTest {
     }
     conf.put(CLIENT_SHUTDOWN_TIMEOUT.key(), "30s")
     conf.put(LIVY_JARS.key, "")
+    // Bind the RPC server to loopback so this test works on hosts (macOS,
+    // laptops) whose primary hostname resolves to a loopback-only address;
+    // without this the driver JVM times out contacting the server and exits.
+    conf.put(RPC_SERVER_ADDRESS.key(), "127.0.0.1")
     conf
   }
 

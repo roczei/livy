@@ -136,7 +136,11 @@ object MiniLivyMain extends MiniClusterBase {
       LivyConf.YARN_POLL_INTERVAL.key -> "500ms",
       LivyConf.RECOVERY_MODE.key -> "recovery",
       LivyConf.RECOVERY_STATE_STORE.key -> "filesystem",
-      LivyConf.RECOVERY_STATE_STORE_URL.key -> s"file://$configPath/state-store")
+      LivyConf.RECOVERY_STATE_STORE_URL.key -> s"file://$configPath/state-store",
+      // Bind to loopback so the MiniLivyMain server is reachable on hosts
+      // (macOS, some CI containers) whose canonical hostname resolves to a
+      // loopback-only address and the routable IP is unreachable.
+      LivyConf.SERVER_HOST.key -> "127.0.0.1")
     val thriftEnabled = sys.env.get("LIVY_TEST_THRIFT_ENABLED")
     if (thriftEnabled.nonEmpty && thriftEnabled.forall(_.toBoolean)) {
       baseConf + (LivyConf.THRIFT_SERVER_ENABLED.key -> "true")

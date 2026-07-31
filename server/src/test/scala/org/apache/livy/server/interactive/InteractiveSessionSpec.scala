@@ -29,8 +29,10 @@ import org.json4s.jackson.JsonMethods.parse
 import org.mockito.{Matchers => MockitoMatchers}
 import org.mockito.Matchers._
 import org.mockito.Mockito.{atLeastOnce, verify, when}
-import org.scalatest.{BeforeAndAfterAll, FunSpec, Matchers}
+import org.scalatest.BeforeAndAfterAll
 import org.scalatest.concurrent.Eventually._
+import org.scalatest.funspec.AnyFunSpec
+import org.scalatest.matchers.should.Matchers
 import org.scalatestplus.mockito.MockitoSugar.mock
 
 import org.apache.livy.{ExecuteRequest, JobHandle, LivyBaseUnitTestSuite, LivyConf}
@@ -41,7 +43,7 @@ import org.apache.livy.server.recovery.SessionStore
 import org.apache.livy.sessions.{PySpark, SessionState, Spark}
 import org.apache.livy.utils.{AppInfo, SparkApp}
 
-class InteractiveSessionSpec extends FunSpec
+class InteractiveSessionSpec extends AnyFunSpec
     with Matchers with BeforeAndAfterAll with LivyBaseUnitTestSuite {
 
   private val livyConf = new LivyConf()
@@ -68,7 +70,12 @@ class InteractiveSessionSpec extends FunSpec
     req.name = Some("InteractiveSessionSpec")
     req.conf = Map(
       SparkLauncher.DRIVER_EXTRA_CLASSPATH -> sys.props("java.class.path"),
-      RSCConf.Entry.LIVY_JARS.key() -> ""
+      RSCConf.Entry.LIVY_JARS.key() -> "",
+      // Bind RPC to loopback so the child JVM can connect on hosts (macOS,
+      // laptops on flaky networks) whose primary hostname resolves to a
+      // loopback-only address; without this the driver times out contacting
+      // the server on the machine's routable IP and exits with code 1.
+      RSCConf.Entry.RPC_SERVER_ADDRESS.key() -> "127.0.0.1"
     )
     InteractiveSession.create(0, None, null, None, livyConf, accessManager, req,
       sessionStore, None, None, mockApp)
@@ -197,12 +204,15 @@ class InteractiveSessionSpec extends FunSpec
         "data" -> Map("text/plain" -> "3")))
       )
 
+      // The Scala REPL under Spark 4 (2.13) may or may not prefix the
+      // bound-name output with `val ` depending on the driver JVM's precise
+      // `-Yrepl-class-based` handling; accept either form so both spark3 and
+      // spark4 builds pass without special-casing environment quirks.
       val scalaResult = executeStatement("1 + 2", Some("spark"))
-      scalaResult should equal (Extraction.decompose(Map(
-        "status" -> "ok",
-        "execution_count" -> 1,
-        "data" -> Map("text/plain" -> "res0: Int = 3\n")))
-      )
+      val scalaData = ((scalaResult \ "data") \ "text/plain").extract[String]
+      scalaData should (equal ("res0: Int = 3\n") or equal ("val res0: Int = 3\n"))
+      (scalaResult \ "status").extract[String] should equal ("ok")
+      (scalaResult \ "execution_count").extract[Int] should equal (1)
 
       val rResult = executeStatement("1 + 2", Some("sparkr"))
       rResult should equal (Extraction.decompose(Map(

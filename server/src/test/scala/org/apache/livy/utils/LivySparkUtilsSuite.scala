@@ -17,14 +17,14 @@
 
 package org.apache.livy.utils
 
-import org.scalatest.FunSuite
-import org.scalatest.Matchers
+import org.scalatest.funsuite.AnyFunSuite
+import org.scalatest.matchers.should.Matchers
 
 import org.apache.livy.{LivyBaseUnitTestSuite, LivyConf}
 import org.apache.livy.LivyConf._
 import org.apache.livy.server.LivyServer
 
-class LivySparkUtilsSuite extends FunSuite with Matchers with LivyBaseUnitTestSuite {
+class LivySparkUtilsSuite extends AnyFunSuite with Matchers with LivyBaseUnitTestSuite {
 
   import LivySparkUtils._
 
@@ -48,6 +48,8 @@ class LivySparkUtilsSuite extends FunSuite with Matchers with LivyBaseUnitTestSu
     testSparkVersion("3.1.0")
     testSparkVersion("3.2.0")
     testSparkVersion("3.5.0")
+    testSparkVersion("4.0.0")
+    testSparkVersion("4.1.2")
   }
 
   test("should complain about unsupported Spark versions") {
@@ -91,6 +93,8 @@ class LivySparkUtilsSuite extends FunSuite with Matchers with LivyBaseUnitTestSu
     defaultSparkScalaVersion(formatSparkVersion("3.0.0")) shouldBe "2.12"
     defaultSparkScalaVersion(formatSparkVersion("3.1.0")) shouldBe "2.12"
     defaultSparkScalaVersion(formatSparkVersion("3.5.0")) shouldBe "2.12"
+    defaultSparkScalaVersion(formatSparkVersion("4.0.0")) shouldBe "2.13"
+    defaultSparkScalaVersion(formatSparkVersion("4.1.2")) shouldBe "2.13"
   }
 
   test("sparkScalaVersion() should use spark-submit detected Scala version.") {

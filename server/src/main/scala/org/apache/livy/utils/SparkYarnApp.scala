@@ -139,8 +139,12 @@ class SparkYarnApp private[utils] (
   private var yarnDiagnostics: IndexedSeq[String] = IndexedSeq.empty[String]
 
   override def log(): IndexedSeq[String] =
-    ("stdout: " +: process.map(_.inputLines).getOrElse(ArrayBuffer.empty[String])) ++
-    ("\nstderr: " +: process.map(_.errorLines).getOrElse(ArrayBuffer.empty[String])) ++
+    // Use `IndexedSeq.empty` (immutable) rather than an `ArrayBuffer` so the
+    // Option#getOrElse return type lines up with the immutable `IndexedSeq`
+    // required by the ambient signature -- Scala 2.13 no longer widens
+    // mutable Buffers to immutable IndexedSeq implicitly.
+    ("stdout: " +: process.map(_.inputLines).getOrElse(IndexedSeq.empty[String])) ++
+    ("\nstderr: " +: process.map(_.errorLines).getOrElse(IndexedSeq.empty[String])) ++
     ("\nYARN Diagnostics: " +: yarnDiagnostics)
 
   override def kill(): Unit = synchronized {
@@ -344,11 +348,11 @@ class SparkYarnApp private[utils] (
       debug(s"$appId $state ${yarnDiagnostics.mkString(" ")}")
     } catch {
       case _: InterruptedException =>
-        yarnDiagnostics = ArrayBuffer("Session stopped by user.")
+        yarnDiagnostics = IndexedSeq("Session stopped by user.")
         changeState(SparkApp.State.KILLED)
       case NonFatal(e) =>
         error(s"Error whiling refreshing YARN state", e)
-        yarnDiagnostics = ArrayBuffer(e.getMessage)
+        yarnDiagnostics = IndexedSeq(e.getMessage)
         changeState(SparkApp.State.FAILED)
     }
   }

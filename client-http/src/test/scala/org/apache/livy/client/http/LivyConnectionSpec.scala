@@ -25,14 +25,15 @@ import org.eclipse.jetty.security._
 import org.eclipse.jetty.security.UserStore
 import org.eclipse.jetty.security.authentication.BasicAuthenticator
 import org.eclipse.jetty.util.security._
-import org.scalatest.{BeforeAndAfterAll, FunSpecLike}
-import org.scalatest.Matchers._
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.funspec.AnyFunSpecLike
+import org.scalatest.matchers.should.Matchers._
 import org.scalatra.servlet.ScalatraListener
 
 import org.apache.livy.{LivyBaseUnitTestSuite, LivyConf}
 import org.apache.livy.server.WebServer
 
-class LivyConnectionSpec extends FunSpecLike with BeforeAndAfterAll with LivyBaseUnitTestSuite {
+class LivyConnectionSpec extends AnyFunSpecLike with BeforeAndAfterAll with LivyBaseUnitTestSuite {
   describe("LivyConnection") {
     def basicAuth(username: String, password: String, realm: String): SecurityHandler = {
       val roles = Array("user")
@@ -64,7 +65,11 @@ class LivyConnectionSpec extends FunSpecLike with BeforeAndAfterAll with LivyBas
     def test(password: String, livyConf: LivyConf = new LivyConf()): Unit = {
       val username = "user name"
 
-      val server = new WebServer(livyConf, "0.0.0.0", 0)
+      // Bind to loopback so the tests work on hosts (macOS, laptops) whose
+      // canonical hostname resolves to an unreachable local IP; the default
+      // "0.0.0.0" would swap in that address after start() and the client
+      // then times out contacting it.
+      val server = new WebServer(livyConf, "127.0.0.1", 0)
       server.context.setSecurityHandler(basicAuth(username, password, "realm"))
       server.context.setResourceBase("src/main/org/apache/livy/server")
       server.context.setInitParameter(ScalatraListener.LifeCycleKey,

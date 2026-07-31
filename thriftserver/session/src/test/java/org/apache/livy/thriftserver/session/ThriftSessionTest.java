@@ -53,6 +53,10 @@ public class ThriftSessionTest {
     conf.put(SparkLauncher.SPARK_MASTER, "local");
     conf.put("spark.sql.warehouse.dir", warehouse);
     conf.put("spark.sql.catalogImplementation", "in-memory");
+    // Bind the RPC server to loopback so this test works on hosts (macOS,
+    // laptops) whose primary hostname resolves to a loopback-only address;
+    // without this the driver JVM times out contacting the server.
+    conf.put(RPC_SERVER_ADDRESS.key(), "127.0.0.1");
 
     livy = new LivyClientBuilder(false)
       .setURI(new URI("rsc:/"))

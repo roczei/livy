@@ -26,8 +26,9 @@ import scala.language.postfixOps
 
 import org.apache.spark.SparkConf
 import org.json4s._
-import org.scalatest.{FlatSpec, Matchers}
 import org.scalatest.concurrent.Eventually._
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
 
 import org.apache.livy.LivyBaseUnitTestSuite
 import org.apache.livy.rsc.RSCConf
@@ -35,11 +36,17 @@ import org.apache.livy.rsc.driver.{Statement, StatementState}
 import org.apache.livy.sessions._
 
 abstract class BaseSessionSpec(kind: Kind)
-    extends FlatSpec with Matchers with LivyBaseUnitTestSuite {
+    extends AnyFlatSpec with Matchers with LivyBaseUnitTestSuite {
 
   implicit val formats = DefaultFormats
 
-  private val rscConf = new RSCConf(new Properties()).set(RSCConf.Entry.SESSION_KIND, kind.toString)
+  private val rscConf = {
+    val props = new Properties()
+    // Bind the RPC server to loopback so these tests work on hosts (macOS,
+    // laptops) whose primary hostname resolves to a loopback-only address.
+    props.setProperty(RSCConf.Entry.RPC_SERVER_ADDRESS.key(), "127.0.0.1")
+    new RSCConf(props).set(RSCConf.Entry.SESSION_KIND, kind.toString)
+  }
 
   private val sparkConf = new SparkConf()
 

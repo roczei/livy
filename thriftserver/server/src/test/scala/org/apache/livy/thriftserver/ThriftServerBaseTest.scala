@@ -20,7 +20,8 @@ package org.apache.livy.thriftserver
 import java.sql.{Connection, DriverManager, Statement}
 
 import org.apache.hive.jdbc.HiveDriver
-import org.scalatest.{BeforeAndAfterAll, FunSuite}
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.funsuite.AnyFunSuite
 
 import org.apache.livy.LivyConf
 import org.apache.livy.LivyConf.{LIVY_SPARK_SCALA_VERSION, LIVY_SPARK_VERSION}
@@ -33,7 +34,7 @@ object ServerMode extends Enumeration {
   val binary, http = Value
 }
 
-abstract class ThriftServerBaseTest extends FunSuite with BeforeAndAfterAll {
+abstract class ThriftServerBaseTest extends AnyFunSuite with BeforeAndAfterAll {
   def mode: ServerMode.Value
   def port: Int
 
@@ -56,6 +57,12 @@ abstract class ThriftServerBaseTest extends FunSuite with BeforeAndAfterAll {
     Class.forName(classOf[HiveDriver].getCanonicalName)
     livyConf.set(LivyConf.THRIFT_TRANSPORT_MODE, mode.toString)
     livyConf.set(LivyConf.THRIFT_SERVER_PORT, port)
+    // Bind the RSC RPC server to loopback so this test works on hosts (macOS,
+    // laptops, some CI containers) whose primary hostname resolves to a
+    // loopback-only address. InteractiveSession.prepareBuilderProp forwards
+    // every `livy.rsc.*` livyConf entry to the driver, so setting it here
+    // is enough to reach the driver JVM.
+    livyConf.set("livy.rsc.rpc.server.address", "127.0.0.1")
 
     // Set formatted Spark and Scala version into livy configuration, this will be used by
     // session creation.
