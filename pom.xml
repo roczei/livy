@@ -96,7 +96,7 @@
     <jetty.version>9.4.56.v20240826</jetty.version>
     <junit.version>4.13.1</junit.version>
     <libthrift.version>0.9.3</libthrift.version>
-    <log4j.version>2.26.0</log4j.version>
+    <log4j.version>2.24.3</log4j.version>
     <kryo.version>4.0.2</kryo.version>
     <metrics.version>3.1.0</metrics.version>
     <mockito.version>1.10.19</mockito.version>
