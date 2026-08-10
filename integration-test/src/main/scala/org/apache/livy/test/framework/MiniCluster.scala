@@ -173,6 +173,15 @@ object MiniLivyMain extends MiniClusterBase {
 
     saveProperties(livyConf, new File(configPath + "/livy.conf"))
 
+    // Ensure the Livy log directory exists before the Jetty NCSA request log tries to
+    // open its rollover file. LivyServer resolves this to $LIVY_HOME/logs, which is
+    // present in a packaged Livy tarball but not in a fresh source checkout, so a
+    // clean IDE run of the integration-test suite fails with
+    // `Cannot write log directory .../logs` otherwise.
+    sys.env.get("LIVY_HOME").foreach { livyHome =>
+      new File(livyHome, "logs").mkdirs()
+    }
+
     val server = new LivyServer()
     server.start()
     server.livyConf.set(LivyConf.ENABLE_HIVE_CONTEXT, false)
