@@ -514,6 +514,13 @@ class LivyConf(loadDefaults: Boolean) extends ClientConf[LivyConf](null) {
   /** Return the location of the spark home directory */
   def sparkHome(): Option[String] = Option(get(SPARK_HOME)).orElse(sys.env.get("SPARK_HOME"))
 
+  /** Return the Livy server port, checking LIVY_SERVER_PORT env var first */
+  def serverPort(): Int = {
+    sys.env.get("LIVY_SERVER_PORT")
+      .map(_.toInt)
+      .getOrElse(getInt(SERVER_PORT))
+  }
+
   /** Return the spark master Livy sessions should use. */
   def sparkMaster(): String = get(LIVY_SPARK_MASTER)
 

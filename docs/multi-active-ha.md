@@ -211,10 +211,10 @@ livy.server.ha.routing.fail-open = true
 zkServer.sh start
 
 # Start Livy server 1
-LIVY_SERVER_PORT=8998 livy-server.sh
+LIVY_SERVER_PORT=8998 livy-server start
 
 # Start Livy server 2
-LIVY_SERVER_PORT=8999 livy-server.sh
+LIVY_SERVER_PORT=8999 livy-server start
 
 # Verify cluster
 curl http://localhost:8998/nodes
@@ -225,13 +225,13 @@ curl http://localhost:8998/nodes
 
 ```bash
 # Node 1
-livy-server.sh  # port 8998 (default)
+livy-server start  # port 8998 (default)
 
 # Node 2
-LIVY_SERVER_PORT=8999 livy-server.sh
+LIVY_SERVER_PORT=8999 livy-server start
 
 # Node 3
-LIVY_SERVER_PORT=9000 livy-server.sh
+LIVY_SERVER_PORT=9000 livy-server start
 
 # Load Balancer (e.g., HAProxy)
 # Round-robin across 3 nodes

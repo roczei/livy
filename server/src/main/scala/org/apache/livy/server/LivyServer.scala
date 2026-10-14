@@ -75,7 +75,7 @@ class LivyServer extends Logging {
     accessManager = new AccessManager(livyConf)
 
     val host = livyConf.get(SERVER_HOST)
-    val port = livyConf.getInt(SERVER_PORT)
+    val port = livyConf.serverPort()
     val basePath = livyConf.get(SERVER_BASE_PATH)
     val multipartConfig = MultipartConfig(
         maxFileSize = Some(livyConf.getLong(LivyConf.FILE_UPLOAD_MAX_SIZE))
