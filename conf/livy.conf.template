@@ -194,6 +194,35 @@
 # livy.server.zk.ssl.truststore.location=
 # livy.server.zk.ssl.truststore.password=
 
+# Multi-Active HA Configuration
+# Enable multi-active High Availability for horizontal scaling of Livy servers.
+# Sessions are distributed across nodes using consistent hashing. Requires:
+#   livy.server.recovery.mode = recovery
+#   livy.server.state-store = zookeeper
+#   livy.server.zookeeper.url = host1:port1,host2:port2
+# livy.server.ha.multi-active.enabled = false
+
+# ZooKeeper path for server registration and cluster membership discovery.
+# Each Livy server creates an ephemeral node here to announce its presence.
+# livy.server.ha.zk.servers-path = /livy/servers
+
+# ZooKeeper path for distributed session ID generation.
+# Per-session-type atomic counters (interactive/batch) ensure monotonic IDs across the cluster.
+# livy.server.ha.zk.session-id-path = /livy/session-ids
+
+# Session allocation strategy. Use ConsistentHashingAllocator for deterministic
+# session ownership based on session ID hash.
+# livy.server.ha.allocator.class = org.apache.livy.server.ha.ConsistentHashingAllocator
+
+# Number of virtual nodes per server in the consistent hashing ring.
+# Higher values improve load balancing; each node appears this many times on the ring.
+# livy.server.ha.allocator.virtual-nodes = 128
+
+# Routing behavior when cluster state is unknown (e.g., ZooKeeper unavailable).
+# true: Serve the request locally (fail open, may cause session duplication).
+# false: Return HTTP 503 Service Unavailable (fail closed, requires resilient clients).
+# livy.server.ha.routing.fail-open = true
+
 # If Livy can't find the yarn app within this time, consider it lost.
 # livy.server.yarn.app-lookup-timeout = 120s
 # When the cluster is busy, we may fail to launch yarn app in app-lookup-timeout, then it would

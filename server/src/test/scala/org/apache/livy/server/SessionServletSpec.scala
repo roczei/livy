@@ -60,12 +60,14 @@ object SessionServletSpec {
 
     val accessManager = new AccessManager(conf)
     new SessionServlet(sessionManager, conf, accessManager) with RemoteUserOverride {
-      override protected def createSession(req: HttpServletRequest): Session = {
+      override protected def createSession(req: HttpServletRequest,
+          sessionId: Option[Int] = None): Session = {
         val params = bodyAs[Map[String, String]](req)
         val owner = remoteUser(req)
         val impersonatedUser = accessManager.checkImpersonation(
           proxyUser(req, params.get(PROXY_USER)), owner)
-        new MockSession(sessionManager.nextId(), owner, None, None, impersonatedUser, conf)
+        val id = sessionId.getOrElse(sessionManager.nextId())
+        new MockSession(id, owner, None, None, impersonatedUser, conf)
       }
 
       override protected def clientSessionView(

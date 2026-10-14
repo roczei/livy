@@ -51,9 +51,9 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
 {
   /**
    * Creates a new session based on the current request. The implementation is responsible for
-   * parsing the body of the request.
+   * parsing the body of the request. An optional sessionId can be provided for HA routing.
    */
-  protected def createSession(req: HttpServletRequest): S
+  protected def createSession(req: HttpServletRequest, sessionId: Option[Int] = None): S
 
   /**
    * Returns a object representing the session data to be sent back to the client.
@@ -133,12 +133,39 @@ abstract class SessionServlet[S <: Session, R <: RecoveryMetadata](
       } else {
         try {
           val session = sessionManager.register(createSession(request))
-          // Because it may take some time to establish the session, update the last activity
-          // time before returning the session info to the client.
           session.recordActivity()
           Created(clientSessionView(session, request),
             headers = Map("Location" ->
               (getRequestPathInfo(request) + url(getSession, "id" -> session.id.toString))))
+        } catch {
+          case e: IllegalArgumentException =>
+            BadRequest(ResponseMessage("Rejected, Reason: " + e.getMessage))
+        }
+      }
+    }
+  }
+
+  post("/:id") {
+    synchronized {
+      if (tooManySessions) {
+        BadRequest(ResponseMessage("Rejected, too many sessions are being created!"))
+      } else {
+        try {
+          val idParam = params("id")
+          if (!idParam.forall(_.isDigit)) {
+            BadRequest(ResponseMessage("Session id must be numeric"))
+          } else {
+            val sessionId = idParam.toInt
+            if (sessionManager.get(sessionId).isDefined) {
+              Conflict(ResponseMessage(s"Session $sessionId already exists"))
+            } else {
+              val session = sessionManager.register(createSession(request, Some(sessionId)))
+              session.recordActivity()
+              Created(clientSessionView(session, request),
+                headers = Map("Location" ->
+                  (getRequestPathInfo(request) + url(getSession, "id" -> session.id.toString))))
+            }
+          }
         } catch {
           case e: IllegalArgumentException =>
             BadRequest(ResponseMessage("Rejected, Reason: " + e.getMessage))

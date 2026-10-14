@@ -51,9 +51,10 @@ class InteractiveSessionServlet(
   mapper.registerModule(new SessionKindModule())
     .registerModule(new Json4sScalaModule())
 
-  override protected def createSession(req: HttpServletRequest): InteractiveSession = {
+  override protected def createSession(req: HttpServletRequest,
+      sessionId: Option[Int] = None): InteractiveSession = {
     val createRequest = bodyAs[CreateInteractiveRequest](req)
-    val sessionId = sessionManager.nextId();
+    val id = sessionId.getOrElse(sessionManager.nextId());
 
     // Calling getTimeAsMs just to validate the ttl and idleTimeout values
     if (createRequest.ttl.isDefined) {
@@ -64,7 +65,7 @@ class InteractiveSessionServlet(
     }
 
     InteractiveSession.create(
-      sessionId,
+      id,
       createRequest.name,
       remoteUser(req),
       proxyUser(req, createRequest.proxyUser),
