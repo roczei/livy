@@ -20,6 +20,7 @@ package org.apache.livy.server.ha
 import javax.servlet.{FilterChain, ServletRequest, ServletResponse}
 import javax.servlet.http.{HttpServletRequest, HttpServletResponse}
 
+import org.mockito.ArgumentMatchers._
 import org.mockito.Mockito._
 import org.scalatest.funspec.AnyFunSpec
 import org.scalatestplus.mockito.MockitoSugar
