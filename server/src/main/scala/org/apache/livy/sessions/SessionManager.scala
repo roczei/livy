@@ -68,7 +68,8 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     sessionRecovery: R => S,
     sessionStore: SessionStore,
     sessionType: String,
-    mockSessions: Option[Seq[S]] = None)
+    mockSessions: Option[Seq[S]] = None,
+    idGenerator: Option[Any] = None)
   extends Logging {
 
   import SessionManager._
@@ -79,6 +80,7 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
   protected[this] final val sessions = mutable.LinkedHashMap[Int, S]()
   private[this] final val sessionsByName = mutable.HashMap[String, S]()
 
+  private[this] var _idGenerator: Option[Any] = idGenerator
 
   private[this] final val sessionTimeoutCheck = livyConf.getBoolean(LivyConf.SESSION_TIMEOUT_CHECK)
   private[this] final val sessionTimeoutCheckSkipBusy =
@@ -93,13 +95,24 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
   private[this] final val sessionStateRetainedInSec =
     TimeUnit.MILLISECONDS.toNanos(livyConf.getTimeAsMs(LivyConf.SESSION_STATE_RETAIN_TIME))
 
-  mockSessions.getOrElse(recover()).foreach(register)
+  private[this] final val haEnabled = livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)
+
+  mockSessions.getOrElse(if (haEnabled) Seq.empty else recover()).foreach(register)
   new GarbageCollector().start()
 
+  def setIdGenerator(gen: Any): Unit = synchronized {
+    _idGenerator = Some(gen)
+  }
+
   def nextId(): Int = synchronized {
-    val id = idCounter.getAndIncrement()
-    sessionStore.saveNextSessionId(sessionType, idCounter.get())
-    id
+    _idGenerator match {
+      case Some(gen: org.apache.livy.server.ha.ZkSessionIdGenerator) =>
+        gen.nextId()
+      case _ =>
+        val id = idCounter.getAndIncrement()
+        sessionStore.saveNextSessionId(sessionType, idCounter.get())
+        id
+    }
   }
 
   def register(session: S): S = {
@@ -128,13 +141,46 @@ class SessionManager[S <: Session, R <: RecoveryMetadata : ClassTag](
     session
   }
 
-  def get(id: Int): Option[S] = sessions.get(id)
+  def get(id: Int): Option[S] = sessions.synchronized {
+    sessions.get(id).orElse(recoverOne(id))
+  }
 
   def get(sessionName: String): Option[S] = sessionsByName.get(sessionName)
 
   def size(): Int = sessions.size
 
   def all(): Iterable[S] = sessions.values
+
+  def recoverOne(id: Int): Option[S] = synchronized {
+    sessions.get(id).orElse {
+      try {
+        sessionStore.get[R](sessionType, id).flatMap { metadata =>
+          val session = sessionRecovery(metadata)
+          sessions.put(session.id, session)
+          session.name.foreach(sessionsByName.put(_, session))
+          Some(session)
+        }
+      } catch {
+        case NonFatal(e) =>
+          error(s"Error recovering session $id of type $sessionType", e)
+          None
+      }
+    }
+  }
+
+  def releaseNotOwned(isOwner: Int => Boolean): Unit = synchronized {
+    val toRemove = sessions.filter { case (id, _) => !isOwner(id) }
+    toRemove.foreach { case (id, session) =>
+      try {
+        sessions.remove(id)
+        session.name.foreach(sessionsByName.remove)
+        info(s"Released session $id as it is no longer owned by this node")
+      } catch {
+        case NonFatal(e) =>
+          warn(s"Error releasing session $id", e)
+      }
+    }
+  }
 
   def delete(id: Int): Option[Future[Unit]] = {
     get(id).map(delete)

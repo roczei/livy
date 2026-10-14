@@ -146,6 +146,8 @@ class ZooKeeperManager(
     curatorClient.close()
   }
 
+  private[livy] def curator: CuratorFramework = curatorClient
+
   // TODO Make sure ZK path has proper secure permissions so that other users cannot read its
   // contents.
   def set(key: String, value: Object): Unit = {

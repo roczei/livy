@@ -24,6 +24,8 @@ import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 
 import org.apache.livy.{LivyConf, Logging}
+import org.apache.livy.server.batch.BatchRecoveryMetadata
+import org.apache.livy.server.interactive.InteractiveRecoveryMetadata
 import org.apache.livy.sessions.Session.RecoveryMetadata
 
 private[recovery] case class SessionManagerState(nextSessionId: Int)
@@ -83,6 +85,30 @@ class SessionStore(
    */
   def remove(sessionType: String, id: Int): Unit = {
     store.remove(sessionPath(sessionType, id))
+  }
+
+  /**
+   * Get a single session by id from the state store.
+   */
+  def get[T <: RecoveryMetadata : ClassTag](sessionType: String, id: Int): Option[T] = {
+    store.get[T](sessionPath(sessionType, id))
+  }
+
+  /**
+   * Get session id by name from the state store.
+   * Returns None if no session with that name is found.
+   */
+  def getIdByName(sessionType: String, name: String): Option[Int] = {
+    getAllSessions[RecoveryMetadata](sessionType)
+      .collect { case Success(m) => m }
+      .find { m =>
+        m match {
+          case batch: BatchRecoveryMetadata => batch.name.contains(name)
+          case interactive: InteractiveRecoveryMetadata => interactive.name.contains(name)
+          case _ => false
+        }
+      }
+      .map(_.id)
   }
 
   private def sessionManagerPath(sessionType: String): String =

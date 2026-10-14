@@ -396,6 +396,16 @@ object LivyConf {
   val LIVY_ZK_TRUSTSTORE_PASS = Entry("livy.server.zk.ssl.truststore.password", null)
   val LIVY_ZK_CLIENT_SECURE = Entry("livy.server.zk.client.secure", false)
 
+  // Multi-active HA configuration
+  val HA_MULTI_ACTIVE_ENABLED = Entry("livy.server.ha.multi-active.enabled", false)
+  val HA_ZK_SERVERS_PATH = Entry("livy.server.ha.zk.servers-path", "/livy/servers")
+  val HA_ZK_SESSION_ID_PATH = Entry("livy.server.ha.zk.session-id-path", "/livy/session-ids")
+  val HA_ALLOCATOR_CLASS =
+    Entry("livy.server.ha.allocator.class",
+      "org.apache.livy.server.ha.ConsistentHashingAllocator")
+  val HA_ALLOCATOR_VIRTUAL_NODES = Entry("livy.server.ha.allocator.virtual-nodes", 128)
+  val HA_ROUTING_FAIL_OPEN = Entry("livy.server.ha.routing.fail-open", true)
+
   val SPARK_MASTER = "spark.master"
   val SPARK_DEPLOY_MODE = "spark.submit.deployMode"
   val SPARK_JARS = "spark.jars"
@@ -503,6 +513,13 @@ class LivyConf(loadDefaults: Boolean) extends ClientConf[LivyConf](null) {
 
   /** Return the location of the spark home directory */
   def sparkHome(): Option[String] = Option(get(SPARK_HOME)).orElse(sys.env.get("SPARK_HOME"))
+
+  /** Return the Livy server port, checking LIVY_SERVER_PORT env var first */
+  def serverPort(): Int = {
+    sys.env.get("LIVY_SERVER_PORT")
+      .map(_.toInt)
+      .getOrElse(getInt(SERVER_PORT))
+  }
 
   /** Return the spark master Livy sessions should use. */
   def sparkMaster(): String = get(LIVY_SPARK_MASTER)

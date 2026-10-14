@@ -54,8 +54,9 @@ class InteractiveSessionServletSpec extends BaseInteractiveServletSpec {
 
     private var statements = IndexedSeq[Statement]()
 
-    override protected def createSession(req: HttpServletRequest): InteractiveSession = {
-      super.createSession(req)
+    override protected def createSession(req: HttpServletRequest,
+        sessionId: Option[Int] = None): InteractiveSession = {
+      super.createSession(req, sessionId)
 
       val statementCounter = new AtomicInteger()
 

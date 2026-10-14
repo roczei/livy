@@ -43,12 +43,13 @@ class BatchSessionServlet(
   extends SessionServlet(sessionManager, livyConf, accessManager)
 {
 
-  override protected def createSession(req: HttpServletRequest): BatchSession = {
+  override protected def createSession(req: HttpServletRequest,
+      sessionId: Option[Int] = None): BatchSession = {
     val createRequest = bodyAs[CreateBatchRequest](req)
-    val sessionId = sessionManager.nextId()
+    val id = sessionId.getOrElse(sessionManager.nextId())
     val sessionName = createRequest.name
     BatchSession.create(
-      sessionId,
+      id,
       sessionName,
       createRequest,
       livyConf,

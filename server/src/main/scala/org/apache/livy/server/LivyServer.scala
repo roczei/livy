@@ -38,6 +38,7 @@ import org.scalatra.servlet.{MultipartConfig, ServletApiImplicits}
 import org.apache.livy._
 import org.apache.livy.server.auth.LdapAuthenticationHandlerImpl
 import org.apache.livy.server.batch.BatchSessionServlet
+import org.apache.livy.server.ha
 import org.apache.livy.server.interactive.InteractiveSessionServlet
 import org.apache.livy.server.recovery.{RecoveryServlet, SessionStore, StateStore, ZooKeeperManager}
 import org.apache.livy.server.ui.UIServlet
@@ -64,12 +65,17 @@ class LivyServer extends Logging {
 
   private var ugi: UserGroupInformation = _
 
+  private var haAllocator: Option[ha.Allocator] = None
+  private var haRegistrar: Option[ha.ZkServerRegistrar] = None
+  private var haInteractiveIdGen: Option[ha.ZkSessionIdGenerator] = None
+  private var haBatchIdGen: Option[ha.ZkSessionIdGenerator] = None
+
   def start(): Unit = {
     livyConf = new LivyConf().loadFromFile("livy.conf")
     accessManager = new AccessManager(livyConf)
 
     val host = livyConf.get(SERVER_HOST)
-    val port = livyConf.getInt(SERVER_PORT)
+    val port = livyConf.serverPort()
     val basePath = livyConf.get(SERVER_BASE_PATH)
     val multipartConfig = MultipartConfig(
         maxFileSize = Some(livyConf.getLong(LivyConf.FILE_UPLOAD_MAX_SIZE))
@@ -265,6 +271,11 @@ class LivyServer extends Logging {
             mount(context, livyVersionServlet, "/version/*")
 
             mount(context, recoveryServlet, "/recovery/*")
+
+            if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
+              val nodesServlet = new ha.NodesServlet(haRegistrar.get)
+              mount(context, nodesServlet, "/nodes/*")
+            }
           } catch {
             case e: Throwable =>
               error("Exception thrown when initializing server", e)
@@ -352,23 +363,73 @@ class LivyServer extends Logging {
       server.context.addFilter(accessHolder, "/*", EnumSet.allOf(classOf[DispatcherType]))
     }
 
+    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
+      require(zkManager.isDefined, "Multi-active HA requires ZooKeeper state store")
+      require(livyConf.get(LivyConf.RECOVERY_STATE_STORE) == "zookeeper",
+        "Multi-active HA requires state-store=zookeeper")
+
+      info("HA multi-active enabled, initializing allocator and registrar")
+      haAllocator = Some(ha.Allocator.create(livyConf))
+
+      val curator = zkManager.get.curator
+      haRegistrar = Some(new ha.ZkServerRegistrar(curator, livyConf, haAllocator.get))
+
+      val nextInteractiveId = sessionStore.getNextSessionId("interactive")
+      haInteractiveIdGen = Some(
+        new ha.ZkSessionIdGenerator(curator, livyConf.get(LivyConf.HA_ZK_SESSION_ID_PATH)
+          + "/interactive", nextInteractiveId))
+
+      val nextBatchId = sessionStore.getNextSessionId("batch")
+      haBatchIdGen = Some(
+        new ha.ZkSessionIdGenerator(curator, livyConf.get(LivyConf.HA_ZK_SESSION_ID_PATH)
+          + "/batch", nextBatchId))
+
+      info("HA multi-active routing filter enabled")
+      val routingFilter = new ha.SessionRoutingFilter(
+        haAllocator.get, () => None, sessionStore, livyConf)
+      val routingHolder = new FilterHolder(routingFilter)
+      server.context.addFilter(routingHolder, "/*", EnumSet.allOf(classOf[DispatcherType]))
+    }
+
     server.start()
 
     _thriftServerFactory.foreach {
       _.start(livyConf, interactiveSessionManager, sessionStore, accessManager)
     }
 
+    _serverUrl = Some(s"${server.protocol}://${server.host}:${server.port}")
+    sys.props("livy.server.server-url") = _serverUrl.get
+
+    if (livyConf.getBoolean(LivyConf.HA_MULTI_ACTIVE_ENABLED)) {
+      haInteractiveIdGen.foreach { gen =>
+        gen.initialize()
+        interactiveSessionManager.setIdGenerator(gen)
+      }
+      haBatchIdGen.foreach { gen =>
+        gen.initialize()
+        batchSessionManager.setIdGenerator(gen)
+      }
+
+      val serverMetadata = ha.ServerMetadata(
+        host = server.host,
+        port = server.port,
+        uuid = java.util.UUID.randomUUID().toString,
+        scheme = server.protocol,
+        status = "RUNNING"
+      )
+      haRegistrar.foreach(_.register(serverMetadata))
+      info(s"Multi-active HA enabled: registered as $serverMetadata")
+    }
+
     Runtime.getRuntime().addShutdownHook(new Thread("Livy Server Shutdown") {
       override def run(): Unit = {
         info("Shutting down Livy server.")
+        haRegistrar.foreach(_.stop())
         zkManager.foreach(_.stop())
         server.stop()
         _thriftServerFactory.foreach(_.stop())
       }
     })
-
-    _serverUrl = Some(s"${server.protocol}://${server.host}:${server.port}")
-    sys.props("livy.server.server-url") = _serverUrl.get
   }
 
   def runKinit(keytab: String, principal: String): Boolean = {
